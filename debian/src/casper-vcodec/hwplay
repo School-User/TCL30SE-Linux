@@ -22,7 +22,12 @@ src=$1; shift
 # extra mpv options for tuning, one file: ~/.config/hwplay/mpv-opts (whitespace separated, e.g. --interpolation)
 extra=; [ -f "$HOME/.config/hwplay/mpv-opts" ] && extra=$(cat "$HOME/.config/hwplay/mpv-opts")
 maxh=${HWPLAY_MAXH:-1080}; maxfps=${HWPLAY_MAXFPS:-30}
-export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1}
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+# use the given display if its socket exists, else the first live one (labwc = wayland-0, sway = wayland-1)
+if [ -z "$WAYLAND_DISPLAY" ] || [ ! -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; then
+	for s in "$XDG_RUNTIME_DIR"/wayland-[0-9]; do [ -S "$s" ] && { WAYLAND_DISPLAY=${s##*/}; break; }; done
+fi
+export WAYLAND_DISPLAY
 
 if [ -e "$src" ]; then
 	vurl=$src; aurl=$src
