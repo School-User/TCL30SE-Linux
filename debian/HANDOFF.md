@@ -813,3 +813,13 @@ Goal: use the MT6765 VDEC through the stock 32-bit vendor decoder stack (libvcod
 - NOT working: (1) power key does not wake from s2idle (key has wakeup-source, driver arms enable_irq_wake; RTC on the same PMIC does wake). (2) USB host dies across any sleep, docked or not: hub reset fails on resume, DEVCTL 0x98, reboot needed. musb resume_phy_reinit (PHY re-init on resume) did not help.
 - So suspend stays unused: suspend.target masked, no auto-sleep. Power button (labwc sessions) = deck-power menu: shut down / reboot / lock.
 - Patch: kernel/0004-suspend-display-on-usb-phy-resume.patch. Image: backups/boot-b-mainline-2026-11-24-resumephy-01d07e50.img (live).
+
+## eMMC read fix (2026-11-24, kernel nd #9)
+- Symptom: seq read 13 MB/s (write 46), 2 IRQs per 512 B sector. Cause: HS200 reads hit data CRC errors (-84, MSDC_INT 0xa040) on most CMD18
+  multi-block reads; block.c recovery redoes each request one sector at a time. boot0/boot1 read fine (118 MB/s). MSDC_PAD_TUNE0 stays 0
+  (mt6765_compat has data_tune=false, so read data delay is never tuned).
+- Fix: removed `mmc-hs200-1_8v` from mt6762-tcl-cruze.dts -> DDR52 (48 MHz DDR). fio: read 83 MiB/s, write 77 MiB/s, 4k rand 6.1k/11.6k IOPS, 0 CRC errors.
+- The DIAG logging used to find this was removed; released kernel = boot-b-nd-ddr52.img (#9, md5 3ed36c1b...), DT change = kernel/0005.
+- DON'T poke MSDC_PAD_TUNE0 (0x112300F0) live: a delay scan on the root eMMC hung storage and the watchdog reset the phone (ext4 journal replay was clean).
+- Rollback: debian/backups/boot_b-nd5-2026-11-24-before-emmcdiag.img (md5 acfc074a...).
+- Possible later: HS200/HS400 with proper data tuning (data_tune=true + pad delay scan in-kernel) could reach ~150+ MB/s.

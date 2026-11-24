@@ -1,0 +1,31 @@
+From 46e4261111e58264d2f7336be222dffdb045163e Mon Sep 17 00:00:00 2001
+From: School-User <190907003+School-User@users.noreply.github.com>
+Date: Tue, 24 Nov 2026 13:29:27 -0700
+Subject: [PATCH] TCL 30 SE: run eMMC in DDR52 instead of HS200
+
+The mt6765 msdc profile never tunes the read data delay (PAD_TUNE0 stays
+0), so at HS200 most CMD18 multi-block reads failed with data CRC errors
+(-84) and the block layer redid them one sector at a time: 13 MB/s reads.
+DDR52: 83 MiB/s seq read, 77 MiB/s write, 6.1k/11.6k 4K IOPS, no errors.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/mediatek/mt6762-tcl-cruze.dts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/mediatek/mt6762-tcl-cruze.dts b/arch/arm64/boot/dts/mediatek/mt6762-tcl-cruze.dts
+index cc93c73c0..3396a488c 100644
+--- a/arch/arm64/boot/dts/mediatek/mt6762-tcl-cruze.dts
++++ b/arch/arm64/boot/dts/mediatek/mt6762-tcl-cruze.dts
+@@ -369,7 +369,7 @@ &mmc0 {
+ 	bus-width = <8>;
+ 	cap-mmc-highspeed;
+ 	mmc-ddr-1_8v;
+-	mmc-hs200-1_8v;
++	/* No HS200: data delay is never tuned on mt6765, multi-block reads got CRC errors (-84) and fell back to 1-sector reads. DDR52 measured 0 errors, ~80 MB/s. */
+ 	cap-mmc-hw-reset;
+ 	max-frequency = <200000000>;
+ 	non-removable;
+-- 
+2.56.0
+
