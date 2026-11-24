@@ -806,3 +806,10 @@ Goal: use the MT6765 VDEC through the stock 32-bit vendor decoder stack (libvcod
 - Verified: host-ext + old hub with charger: unplug -> role stays host, DEVCTL 0x19; replug -> hub + both receivers back in ~1 s, charging resumes. No reboot. Patch: kernel/0003-usb-hold-role-hotswap.patch.
 - Rollback: backups/boot-b-mainline-2026-11-21-nodebug-3a562ff8.img (the casper-usb-boot hold_role line is a no-op on it).
 - 2026-11-24: live mode switching (casper-usb device -> host-ext) with host_seq=32 (PHY power cycle) does NOT work: DEVCTL 0x99, the attached keyboard died a few seconds later, reboot needed. Mode changes stay reboot-only.
+
+## Suspend (2026-11-24, kernel nd #5)
+- s2idle works: `rtcwake -m freeze -s N` sleeps and wakes on the RTC (suspend_stats: all success). Wi-Fi, GPU service, desktop survive.
+- Display: blank after resume until the DISP power domain was made always-on (mt6765-pm-domains.h MTK_SCPD_ALWAYS_ON). Fixed, verified by the owner.
+- NOT working: (1) power key does not wake from s2idle (key has wakeup-source, driver arms enable_irq_wake; RTC on the same PMIC does wake). (2) USB host dies across any sleep, docked or not: hub reset fails on resume, DEVCTL 0x98, reboot needed. musb resume_phy_reinit (PHY re-init on resume) did not help.
+- So suspend stays unused: suspend.target masked, no auto-sleep. Power button (labwc sessions) = deck-power menu: shut down / reboot / lock.
+- Patch: kernel/0004-suspend-display-on-usb-phy-resume.patch. Image: backups/boot-b-mainline-2026-11-24-resumephy-01d07e50.img (live).

@@ -9,5 +9,6 @@
     <!-- phone volume buttons, same as the pocketshell session: the PMIC key (physical Volume Up) arrives as XF86AudioLowerVolume;
          the other button is read from its GPIO by casper-voldown.service in every session -->
     <keybind key="XF86AudioLowerVolume" onRelease="no"><action name="Execute" command="casper-volume down pmic-labwc"/></keybind>
+    <keybind key="XF86PowerOff" onRelease="yes"><action name="Execute" command="deck-power"/></keybind>
   </keyboard>
 </labwc_config>

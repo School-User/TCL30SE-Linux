@@ -1,0 +1,11 @@
+#!/bin/sh
+# Power button menu (labwc sessions): shut down, reboot or lock. logind ignores the key (HandlePowerKey=ignore), and real
+# suspend is not usable yet (power key cannot wake the phone, USB host dies across sleep), so there is no Sleep entry.
+pgrep -f "zenity.*Power button" >/dev/null && exit 0     # the key repeats: one dialog only
+c=$(zenity --list --title="Power button" --text="Choose an action" --width=360 --height=300 \
+      --column="Action" "Shut down" "Reboot" "Lock" 2>/dev/null) || exit 0
+case "$c" in
+  "Shut down") sudo -n systemctl poweroff ;;
+  Reboot) sudo -n systemctl reboot ;;
+  Lock) deck-lock ;;
+esac

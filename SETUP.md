@@ -5,7 +5,7 @@ This is a record of how the TCL 30 SE (6165S, "cruze_pro", MT6765) runs Debian, 
 (`backup.sh`, `make backup`): the stock firmware is also where the vendor blobs come from.
 
 ## 1. Kernel
-- Source: https://github.com/School-User/TCL30SE-Linux-Kernel (branch `main`) = TheKnightSky/linux-mt6765 `mt6765-devel` + `kernel/0001`
+- Source: private repo TCL30SE-Linux-Kernel (branch `main`) = TheKnightSky/linux-mt6765 `mt6765-devel` + `kernel/0001`
   (device support), `kernel/0002` (MediaTek connectivity port), `kernel/0003` (USB host + dock hot-swap).
 - Config: `kernel/config-7.1.0-mt6765nd`. Build: `debian/build-nodebug.sh`; boot image: `debian/mkboot.sh`
   (`O=... OUTIMG=...`); flash to boot_b only: `debian/deploy.sh` (checks the partition and md5 before rebooting).

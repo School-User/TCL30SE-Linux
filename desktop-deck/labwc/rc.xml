@@ -24,6 +24,7 @@
     <!-- phone volume buttons (same as the other sessions): PMIC key = physical Volume Up arrives as XF86AudioLowerVolume;
          the other button is read by casper-voldown.service in every session -->
     <keybind key="XF86AudioLowerVolume"><action name="Execute" command="casper-volume down pmic-labwc"/></keybind>
+    <keybind key="XF86PowerOff" onRelease="yes"><action name="Execute" command="deck-power"/></keybind>
   </keyboard>
   <windowRules>
     <windowRule identifier="*"><action name="Maximize"/></windowRule>

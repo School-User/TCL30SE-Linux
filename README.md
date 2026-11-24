@@ -24,12 +24,12 @@ Setup: see [SETUP.md](SETUP.md). Everything here is GPL-2.0 (see LICENSE) unless
 
 | Path | What |
 |---|---|
-| `kernel/` | kernel source: https://github.com/School-User/TCL30SE-Linux-Kernel (branch main). Patches here: mainline 7.1 (`0001` device support, `0002` MediaTek connectivity port) and the kernel config |
+| `kernel/` | kernel source: private repo School-User/TCL30SE-Linux-Kernel (branch main). Patches here: mainline 7.1 (`0001` device support, `0002` MediaTek connectivity port) and the kernel config |
 | `debian/src/` | out-of-tree modules: `casper-ion`, `casper-ashmem`, `casper-gpu-dt`, `casper-vcodec` (+ `hwplay`, `vdpipe`, Firefox hand-off), `casper-dvfs` (1.6 GHz), `mt6357-jack` |
 | `debian/*.sh`, `debian/initramfs/init` | boot image build and deploy scripts, initramfs init |
 | `debian/HANDOFF.md`, `WIFI-PORT.md`, ... | bring-up log and per-subsystem notes |
 | `gpu/` | libhybris/PowerVR bring-up, `eglplatform-casper` EGL plugin, `GPU-WRITEUP.md` |
-| `pocketshell/` | git submodule -> https://github.com/School-User/PocketShell (clone with `--recurse-submodules`): the custom Wayland home shell, sway/Sxmo config and session units |
+| `pocketshell/` | git submodule -> private repo School-User/PocketShell (clone with `--recurse-submodules`): the custom Wayland home shell, sway/Sxmo config and session units |
 | `notes/` | project state, device facts, GSI (Android) notes |
 | `home/`, `killbg/`, `bootlogo/` | small Android-side apps and boot logo (GSI era) |
 

@@ -12,3 +12,5 @@ Install on the phone: `deck-session`, `deck-term` -> /usr/local/bin; `labwc/`, `
 Switch: `casper-desktop deck` (back: `casper-desktop xfce` or `pocketshell`). Battery: ../desktop-xfce/casper-battery*.
 
 Lock: `deck-lock` (-> /usr/local/bin) = gtklock with a big 12-hour clock and date (`gtklock.css` -> /usr/local/share/cyberdeck/; falls back to swaylock); Super+L, the "lock" button on the bar, and swayidle after 5 min idle (DECK_LOCK_AFTER). Unlocks with the login password on a keyboard; refuses to lock while the account has no password. Emergency unlock over SSH: `pkill -USR1 swaylock`.
+
+Power button: `deck-power` (-> /usr/local/bin), bound to XF86PowerOff in both labwc sessions: a menu with Shut down / Reboot / Lock (suspend is not usable yet, see debian/HANDOFF.md "Suspend").
