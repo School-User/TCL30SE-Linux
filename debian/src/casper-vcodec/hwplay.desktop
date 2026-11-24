@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Video Player
+GenericName=Video Player
+Comment=Play videos and YouTube links with the hardware decoder
+Exec=hwplay-launch %U
+Icon=mpv
+Terminal=false
+Categories=AudioVideo;Video;Player;
+MimeType=video/mp4;video/x-matroska;video/webm;video/quicktime;video/x-m4v;

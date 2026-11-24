@@ -1,0 +1,134 @@
+#!/bin/sh
+# hwplay URL|FILE [mpv options...]
+# Plays H.264 video through the MT6765 hardware decoder:
+#   ffmpeg (demux only) -> vdpipe (32-bit vendor decoder, Android chroot) -> mpv (raw NV12) + audio from the source.
+# YouTube/URLs go through yt-dlp, which picks the H.264 (avc1) stream (<= 1080p30 by default: HWPLAY_MAXH, HWPLAY_MAXFPS).
+# HWPLAY_VO=wlshm uses mpv's shared-memory output instead of the GPU one.
+# Not H.264 (e.g. VP9: MT6765 has no VP9 hardware; the vendor VP9 decoder is CPU code): plain mpv with its own
+# multi-threaded software decoder - ffmpeg's VP9 does 720p at ~90 fps on 4 cores here, and mpv can seek natively.
+# Seeking: --start=SECONDS|M:SS|H:MM:SS, and while playing LEFT/RIGHT -/+10 s, DOWN/UP -/+60 s, double-tap left/right third -/+10 s
+# (hwplay-seek.lua). The pipe can't seek, so a seek restarts the pipeline at the keyframe <= target; the audio starts at that same
+# keyframe time through an mpv EDL segment.
+set -eu
+# Run on the fast CPU cluster (cores 0-3 here; 4-7 are ~40% slower): mpv/ffmpeg/vdpipe on the slow cores caused frame drops.
+if [ -z "${HWPLAY_PINNED:-}" ]; then
+	FAST=$(for c in /sys/devices/system/cpu/cpu[0-9]*; do echo "$(cat $c/cpu_capacity 2>/dev/null || echo 0) ${c##*cpu}"; done | sort -rn |
+		awk 'NR==1{top=$1} $1==top{printf "%s%s", (n++?",":""), $2}')
+	export HWPLAY_PINNED=1
+	[ -n "$FAST" ] && exec taskset -c "$FAST" "$0" "$@"
+fi
+[ $# -ge 1 ] || { echo "usage: hwplay URL|FILE [mpv options]" >&2; exit 2; }
+src=$1; shift
+# extra mpv options for tuning, one file: ~/.config/hwplay/mpv-opts (whitespace separated, e.g. --interpolation)
+extra=; [ -f "$HOME/.config/hwplay/mpv-opts" ] && extra=$(cat "$HOME/.config/hwplay/mpv-opts")
+maxh=${HWPLAY_MAXH:-1080}; maxfps=${HWPLAY_MAXFPS:-30}
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1}
+
+if [ -e "$src" ]; then
+	vurl=$src; aurl=$src
+	set -- "$@" $(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,avg_frame_rate -of json "$src" |
+		jq -r '.streams[0] | "--hwp-codec=\(.codec_name) --hwp-w=\(.width) --hwp-h=\(.height) --hwp-fps=\(.avg_frame_rate)"')
+else
+	# H.264 first (hardware); otherwise the best other stream (VP9/AV1), which mpv decodes in software. HWPLAY_FORMAT overrides.
+	json=$(yt-dlp -j --no-playlist -f "${HWPLAY_FORMAT:-bv*[vcodec^=avc1][height<=$maxh][fps<=$maxfps]+ba[acodec^=mp4a]/bv*[vcodec^=avc1][height<=720][fps<=60]+ba[acodec^=mp4a]/bv*[vcodec^=avc1][height<=$maxh]+ba/bv*[height<=$maxh][fps<=$maxfps]+ba/bv*[height<=$maxh]+ba}" "$src")
+	vurl=$(printf '%s' "$json" | jq -r '.requested_formats[0].url')
+	aurl=$(printf '%s' "$json" | jq -r '.requested_formats[1].url')
+	set -- "$@" $(printf '%s' "$json" | jq -r '.requested_formats[0] | "--hwp-codec=\(.vcodec) --hwp-w=\(.width) --hwp-h=\(.height) --hwp-fps=\(.fps)"')
+	echo "hwplay: $(printf '%s' "$json" | jq -r '.title')" >&2
+fi
+
+# pull our --hwp-* values back out of the argument list
+codec= w= h= fps= pos=0
+for a; do
+	shift
+	case $a in
+	--hwp-codec=*) codec=${a#*=} ;; --hwp-w=*) w=${a#*=} ;; --hwp-h=*) h=${a#*=} ;; --hwp-fps=*) fps=${a#*=} ;;
+	--start=*) pos=$(echo "${a#*=}" | awk -F: '{ t = 0; for (i = 1; i <= NF; i++) t = t * 60 + $i; print t }') ;;
+	*) set -- "$@" "$a" ;;
+	esac
+done
+if [ "${HWPLAY_VO:-gpu}" = wlshm ]; then player="mpv --vo=wlshm"; else # mpv's default quality shaders (lanczos chroma scaling, an rgba16f intermediate buffer) cost the PowerVR GE8320 ~20-40 ms per frame: 720p60
+# fell to 45 fps and 1080p30 to 24. The fast profile + rgba8 present 720p60 at 60.0 and 1080p30 at 30.1 fps.
+player="gpuwin mpv --vo=gpu --gpu-context=wayland --swapchain-depth=3 --profile=fast --fbo-format=rgba8"; fi
+case $codec in
+h264|avc1*) ;;
+*)	echo "hwplay: ${w}x${h} $codec - no hardware decoder for it on this chip, software decode" >&2
+	[ "$pos" = 0 ] || set -- --start="$pos" "$@"
+	if [ "$vurl" = "$aurl" ]; then exec $player --fs --vd-lavc-threads=4 "$@" "$vurl"; fi
+	exec $player --fs --vd-lavc-threads=4 --audio-file="$aurl" "$@" "$vurl" ;;
+esac
+w=$((w & ~1)); h=$((h & ~1))
+# The vendor decoder pads both dimensions up to a multiple of 16 and never crops (1042x720 -> 1056x720, 1920x1080 -> 1920x1088,
+# 1280x546 -> 1280x560): tell mpv the padded frame size and crop the padding off.
+decw=$(( (w + 15) / 16 * 16 )); dech=$(( (h + 15) / 16 * 16 )); crop=
+[ "$decw" = "$w" ] && [ "$dech" = "$h" ] || crop="--video-crop=${w}x${h}+0+0"
+fps=$(echo "$fps" | awk -F/ '{ printf "%.3f", ($2 ? $1 / $2 : $1) }')	# ffprobe gives 30000/1001
+echo "hwplay: ${w}x${h} @ $fps fps, hardware H.264" >&2
+
+run=$(mktemp -d "${XDG_RUNTIME_DIR}/hwplay.XXXXXX")
+seekf=$run/seek sock=$run/ipc
+lua=/usr/local/share/hwplay/hwplay-seek.lua
+mpv_pid= pipe_pid=
+cleanup() {
+	set +e
+	[ -n "$pipe_pid" ] && pkill -P "$pipe_pid" 2>/dev/null
+	[ -n "$mpv_pid" ] && kill "$mpv_pid" 2>/dev/null
+	rm -rf "$run"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
+
+# one JSON IPC command to mpv; prints the reply line
+ipc() {
+	python3 -c 'import socket, sys, json
+s = socket.socket(socket.AF_UNIX); s.settimeout(30); s.connect(sys.argv[1])	# mpv answers late while it sets up the GPU window
+s.sendall((json.dumps({"command": json.loads(sys.argv[2])}) + "\n").encode())
+buf = b""
+while b"request_id" not in buf: buf += s.recv(4096)
+print([l for l in buf.decode().splitlines() if "request_id" in l][0])' "$sock" "$1" 2>/dev/null || true
+}
+
+# keyframe time at or before $1 (where ffmpeg -ss with stream copy will really start)
+keyframe() {
+	[ "$(echo "$1 <= 0" | bc)" = 1 ] && { echo 0; return; }
+	ffprobe -v error -read_intervals "$1%+#60" -select_streams v:0 -show_entries packet=pts_time,flags -of csv=p=0 "$vurl" |
+		awk -F, -v t="$1" '$2 ~ /K/ && $1 <= t + 0.001 { k = $1 } END { print (k == "" ? t : k) }'
+}
+
+# One mpv window for the whole session (opening a new Wayland window costs ~10 s here). Each start/seek feeds a new
+# ffmpeg | vdpipe pipeline through a fifo into it with loadfile; the seek script writes the target to $seekf and stops playback.
+$player --idle=yes --force-window=yes --fs --mute=no --panscan=${HWPLAY_PANSCAN:-1} $extra --input-ipc-server="$sock" \
+	--demuxer=rawvideo --demuxer-rawvideo-w="$decw" --demuxer-rawvideo-h="$dech" $crop \
+	--demuxer-rawvideo-mp-format=nv12 --demuxer-rawvideo-fps="$fps" \
+	--script="$lua" --script-opts="hwplay-file=$seekf" "$@" &
+mpv_pid=$!
+for i in $(seq 100); do [ -S "$sock" ] && ipc '["get_property","idle-active"]' >/dev/null && break; sleep 0.2; done
+
+n=0
+while kill -0 "$mpv_pid" 2>/dev/null; do
+	: > "$seekf"
+	k=$(keyframe "$pos")
+	[ "$pos" = 0 ] || echo "hwplay: starting at ${k}s (keyframe for ${pos}s)" >&2
+	n=$((n + 1)); fifo=$run/video$n; mkfifo "$fifo"
+	( ffmpeg -nostdin -loglevel quiet -ss "$k" -i "$vurl" -map 0:v:0 -c:v copy -bsf:v h264_mp4toannexb -f h264 - |
+		sudo -n /usr/local/bin/vdpipe > "$fifo" ) &
+	pipe_pid=$!
+	# audio: an EDL segment starting at the same keyframe time = a real seek in the audio stream
+	ipc "$(jq -cn --arg a "edl://%${#aurl}%${aurl},${k}" '["set_property","options/audio-files",[$a]]')" >/dev/null
+	ipc "[\"change-list\",\"script-opts\",\"append\",\"hwplay-offset=$k\"]" >/dev/null
+	ipc "$(jq -cn --arg f "$fifo" '["loadfile",$f,"replace"]')" >/dev/null
+	# wait for: a seek request, mpv quitting, or the end of the movie (pipeline done and mpv idle again)
+	while kill -0 "$mpv_pid" 2>/dev/null; do
+		[ -s "$seekf" ] && break
+		if ! kill -0 "$pipe_pid" 2>/dev/null; then
+			case $(ipc '["get_property","idle-active"]') in *'"data":true'*) break ;; esac
+		fi
+		sleep 0.3
+	done
+	pkill -P "$pipe_pid" 2>/dev/null || true; wait "$pipe_pid" 2>/dev/null || true; pipe_pid=
+	rm -f "$fifo"
+	[ -s "$seekf" ] || break
+	pos=$(cat "$seekf")
+done
+ipc '["quit"]' >/dev/null
+wait "$mpv_pid" 2>/dev/null || true

@@ -1,0 +1,12 @@
+* { font-family: "JetBrains Mono", monospace; font-size: 11px; min-height: 0; border: none; border-radius: 0; }
+window#waybar { background: rgba(20, 26, 23, 0.92); color: #cfe3d2; border-bottom: 1px solid #3d5545; }
+#custom-launcher { background: #7fa88a; color: #141a17; font-weight: bold; padding: 0 10px; }
+#taskbar button { color: #6f7f74; padding: 0 8px; background: transparent; }
+#taskbar button.active { color: #cfe3d2; border-bottom: 2px solid #7fa88a; }
+#clock { color: #cfe3d2; font-weight: bold; }
+#cpu, #memory, #network, #pulseaudio, #custom-battery { padding: 0 9px; color: #a9c2ae; border-left: 1px solid #2a352f; }
+#network.disconnected, #pulseaudio.muted { color: #d9a441; }
+#custom-battery { color: #cfe3d2; }
+tooltip { background: #1b2420; border: 1px solid #3d5545; }
+tooltip label { color: #cfe3d2; }
+#custom-lock { background: #3d5545; color: #cfe3d2; padding: 0 9px; }

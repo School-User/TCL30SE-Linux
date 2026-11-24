@@ -1,0 +1,4 @@
+#!/bin/sh
+# Firefox ESR with hardware WebRender on the PowerVR GPU (via libhybris, EGL platform "wayland" = casper plugin).
+export MOZ_ENABLE_WAYLAND=1 MOZ_WEBRENDER=1
+exec /usr/local/bin/gpuwin firefox-esr --no-remote --profile "${FIREFOX_GPU_PROFILE:-$HOME/.config/firefox-gpu}" "$@"

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Desktop dialog for casper-usb-mode: pick the USB-C mode, confirm, reboot.
+cur=$(cat /etc/casper-usb-mode 2>/dev/null || echo device)
+m=$(zenity --list --radiolist --title="USB mode" --width=520 --height=380 \
+  --text="Current: $cur. The phone reboots to change it (switching live jams the USB controller)." \
+  --column="" --column="Mode" --column="Use for" \
+  $( [ $cur = host-ext ] && echo TRUE || echo FALSE ) host-ext "Dock with a charger on its PD port (charges)" \
+  $( [ $cur = host ] && echo TRUE || echo FALSE ) host "Dock or adapter without power (phone powers it)" \
+  $( [ $cur = device ] && echo TRUE || echo FALSE ) device "Laptop cable / plain charger") || exit 0
+[ -n "$m" ] || exit 0
+[ "$m" = "$cur" ] && { zenity --info --text="Already in $m mode."; exit 0; }
+zenity --question --text="Switch USB to $m and reboot now?" && sudo -n /usr/local/bin/casper-usb-mode "$m" --reboot

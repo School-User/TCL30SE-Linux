@@ -1,0 +1,19 @@
+#!/bin/sh
+# Lock the deck session with swaylock (dark green/grey). swaylock unlocks with the user's login password, typed on a
+# keyboard: the on-screen keyboard cannot appear over a lock screen. Refuse to lock while the account has no password,
+# or nobody could unlock it. Emergency unlock over SSH: pkill -USR1 swaylock
+if sudo -n passwd -S "$(id -un)" 2>/dev/null | awk '{exit !($2 == "L" || $2 == "NP")}'; then
+  notify-send -u critical "Lock screen off" "This account has no password yet. Set one with: sudo passwd $(id -un)"
+  exit 1
+fi
+pgrep -x swaylock >/dev/null && exit 0
+if command -v gtklock >/dev/null; then   # gtklock: clock + date on the lock screen
+  pgrep -x gtklock >/dev/null && exit 0
+  exec gtklock -d -s /usr/local/share/cyberdeck/gtklock.css -b "${DECK_WALLPAPER:-$HOME/Pictures/colorado.jpg}" \
+    -t "%-I:%M %p" -D "%A, %B %d" -g Adwaita-dark
+fi
+exec swaylock -f -c 141a17 --font "JetBrains Mono" --indicator-radius 70 --indicator-thickness 8 \
+  --ring-color 3d5545 --key-hl-color 7fa88a --bs-hl-color d86a5a --inside-color 141a17cc --line-color 00000000 \
+  --text-color cfe3d2 --ring-ver-color 7fa88a --inside-ver-color 1b2420cc --text-ver-color cfe3d2 \
+  --ring-wrong-color d86a5a --inside-wrong-color 1b2420cc --text-wrong-color d86a5a --separator-color 00000000 \
+  -i "${DECK_WALLPAPER:-$HOME/Pictures/colorado.jpg}" -s fill --show-failed-attempts

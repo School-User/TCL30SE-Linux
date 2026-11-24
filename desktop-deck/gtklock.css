@@ -1,0 +1,10 @@
+/* deck lock screen (gtklock): dark green/grey, big clock */
+window { background-size: cover; background-position: center; font-family: "JetBrains Mono", monospace; }
+#window-box { background-color: rgba(20, 26, 23, 0.78); border: 1px solid #3d5545; border-radius: 14px; padding: 22px 34px; }
+#clock-label { font-size: 64px; font-weight: bold; color: #cfe3d2; }
+#date-label { font-size: 16px; color: #a9c2ae; margin-bottom: 12px; }
+#input-label { color: #a9c2ae; }
+#input-field { background: #141a17; color: #ffffff; border: 1px solid #7fa88a; border-radius: 6px; caret-color: #7fa88a; }
+#unlock-button { background: #7fa88a; color: #141a17; border-radius: 6px; font-weight: bold; }
+#error-label { color: #d86a5a; }
+#warning-label { color: #d9a441; }

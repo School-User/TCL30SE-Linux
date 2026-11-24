@@ -1,0 +1,30 @@
+{
+  "manifest_version": 2,
+  "name": "Hardware player",
+  "version": "1.3",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "hwplay@casper"
+    }
+  },
+  "permissions": [
+    "tabs",
+    "contextMenus",
+    "storage",
+    "nativeMessaging",
+    "webNavigation",
+    "webRequest",
+    "webRequestBlocking",
+    "*://www.youtube.com/*",
+    "*://m.youtube.com/*",
+    "*://youtu.be/*"
+  ],
+  "background": {
+    "scripts": [
+      "bg.js"
+    ]
+  },
+  "browser_action": {
+    "default_title": "Play this page in the hardware player"
+  }
+}

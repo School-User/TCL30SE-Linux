@@ -1,0 +1,17 @@
+/dts-v1/;
+/plugin/;
+/ {
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			gpu-rt@13000000 {
+				compatible = "casper,mt6765-rgx";
+				reg = <0 0x13000000 0 0x80000>, <0 0x13ffe000 0 0x1000>;
+				interrupts = <0 259 8>;
+				/* running-kernel phandles: topckgen 0x0f, apmixed 0x26 (no power-domains: LK left MFG on) */
+				clocks = <0x0f 100>, <0x0f 38>, <0x26 4>;
+				clock-names = "mfg", "mfgpll_top", "mfgpll";
+			};
+		};
+	};
+};

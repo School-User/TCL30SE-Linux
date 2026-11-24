@@ -1,0 +1,1 @@
+{"name": "hwplay", "description": "Hardware video player launcher", "path": "/usr/local/bin/hwplay-nm", "type": "stdio", "allowed_extensions": ["hwplay@casper"]}

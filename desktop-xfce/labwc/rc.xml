@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<labwc_config>
+  <core><gap>0</gap></core>
+  <touch deviceName="" mapToOutput=""/>
+  <keyboard>
+    <keybind key="W-Return"><action name="Execute" command="foot"/></keybind>
+    <keybind key="W-e"><action name="Execute" command="thunar"/></keybind>
+    <keybind key="W-f"><action name="Execute" command="firefox-gpu"/></keybind>
+    <!-- phone volume buttons, same as the pocketshell session: the PMIC key (physical Volume Up) arrives as XF86AudioLowerVolume;
+         the other button is read from its GPIO by casper-voldown.service in every session -->
+    <keybind key="XF86AudioLowerVolume" onRelease="no"><action name="Execute" command="casper-volume down pmic-labwc"/></keybind>
+  </keyboard>
+</labwc_config>

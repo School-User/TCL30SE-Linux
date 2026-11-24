@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<labwc_config>
+  <core><gap>6</gap></core>
+  <theme>
+    <cornerRadius>6</cornerRadius>
+    <font place="ActiveWindow" name="JetBrains Mono" size="9" weight="bold"/>
+    <font place="InactiveWindow" name="JetBrains Mono" size="9"/>
+    <font place="MenuItem" name="JetBrains Mono" size="10"/>
+  </theme>
+  <touch deviceName="" mapToOutput=""/>
+  <keyboard>
+    <keybind key="W-space"><action name="Execute" command="fuzzel --config=/usr/local/share/cyberdeck/fuzzel.ini"/></keybind>
+    <keybind key="W-d"><action name="Execute" command="fuzzel --config=/usr/local/share/cyberdeck/fuzzel.ini"/></keybind>
+    <keybind key="W-Return"><action name="Execute" command="deck-term"/></keybind>
+    <keybind key="W-f"><action name="Execute" command="firefox-gpu"/></keybind>
+    <keybind key="W-e"><action name="Execute" command="thunar"/></keybind>
+    <keybind key="W-q"><action name="Close"/></keybind>
+    <keybind key="W-m"><action name="ToggleMaximize"/></keybind>
+    <keybind key="W-Up"><action name="ToggleMaximize"/></keybind>
+    <keybind key="W-Left"><action name="SnapToEdge" direction="left"/></keybind>
+    <keybind key="W-Right"><action name="SnapToEdge" direction="right"/></keybind>
+    <keybind key="W-l"><action name="Execute" command="deck-lock"/></keybind>
+    <keybind key="A-Tab"><action name="NextWindow"/></keybind>
+    <!-- phone volume buttons (same as the other sessions): PMIC key = physical Volume Up arrives as XF86AudioLowerVolume;
+         the other button is read by casper-voldown.service in every session -->
+    <keybind key="XF86AudioLowerVolume"><action name="Execute" command="casper-volume down pmic-labwc"/></keybind>
+  </keyboard>
+  <windowRules>
+    <windowRule identifier="*"><action name="Maximize"/></windowRule>
+  </windowRules>
+</labwc_config>

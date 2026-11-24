@@ -1,0 +1,2695 @@
+diff --git c/Kconfig w/Kconfig
+index 9e6d547..d26341b 100755
+--- c/Kconfig
++++ w/Kconfig
+@@ -325,8 +325,8 @@ config MTK_COMBO_GPS
+ config MTK_COMBO_WIFI
+ 	tristate "MediaTek combo chip Wi-Fi support"
+ 	depends on MTK_COMBO
+-	select WIRELESS_EXT
+-	select WEXT_PRIV
++	# select WIRELESS_EXT: changes struct net_device; must stay off (module build)
++	# select WEXT_PRIV: see above
+ 
+ config MTK_PASSPOINT_R1_SUPPORT
+ 	bool "MTK_PASSPOINT_R1_SUPPORT"
+@@ -362,7 +362,7 @@ config MTK_CONN_LTE_IDC_SUPPORT
+ menuconfig GPS
+ 	tristate "GPS drivers"
+ 	default n
+-	---help---
++	help
+ 	  Say Y here for supporting GPS.
+ 
+ config MTK_GPS_SUPPORT
+@@ -456,3 +456,11 @@ config MTK_DISABLE_CONNECTIVITY_LOG
+ 	help
+ 		If enabled, this will silent logging.
+ 		
++
++config MACH_MT6765
++	bool "MediaTek MT6765 platform (port)"
++	default y
++	depends on MTK_COMBO
++	help
++	  The 4.19 vendor tree keys platform code paths off CONFIG_MACH_MT6765.
++	  Mainline has no such symbol; this restores it for the connectivity port.
+diff --git c/Makefile w/Makefile
+index a48cfbb..b7db9a5 100755
+--- c/Makefile
++++ w/Makefile
+@@ -26,6 +26,15 @@ endif
+ WMT_SRC_FOLDER := $(TOP)/common
+ 
+ export TOP WMT_SRC_FOLDER TARGET_BUILD_VARIANT
++# vendor port warning policy: this 4.19 out-of-tree stack is not -Werror clean
++# (mostly missing prototypes / fall-through in vendor code).  Scoped to this
++# directory only; do not copy elsewhere.
++subdir-ccflags-y += -Wno-missing-prototypes -Wno-implicit-fallthrough
++subdir-ccflags-y += -Wno-strict-prototypes -Wno-null-pointer-subtraction -Wno-unused-variable -Wno-array-bounds -Wno-format
++subdir-ccflags-y += -Wno-unneeded-internal-declaration
++subdir-ccflags-y += -Wno-cast-function-type-strict
++# port: ioremap_nocache() was removed in 5.6; ioremap() is already uncached on arm64.
++subdir-ccflags-y += -Dioremap_nocache=ioremap
+ subdir-ccflags-y += -I$(srctree)/
+ subdir-ccflags-y += -I$(srctree)/drivers/misc/mediatek/base/power/include
+ subdir-ccflags-y += -I$(srctree)/drivers/misc/mediatek/clkbuf/src
+@@ -151,5 +160,5 @@ $(info CFG_FM_CHIP_ID is [${CFG_FM_CHIP_ID}])
+ $(info CFG_FM_CHIP is [${CFG_FM_CHIP}])
+ $(info CFG_BUILD_CONNAC2 is [${CFG_BUILD_CONNAC2}])
+ 
+-obj-y += fmradio/
++# obj-y += fmradio/   # FM: not part of the Wi-Fi bring-up, needs CONFIG_MTK_FM_CHIP
+ obj-y += bt/mt66xx/wmt/
+\ No newline at end of file
+diff --git c/bt/mt66xx/wmt/stp_chrdev_bt.c w/bt/mt66xx/wmt/stp_chrdev_bt.c
+index d8e3df7..a5e667e 100644
+--- c/bt/mt66xx/wmt/stp_chrdev_bt.c
++++ w/bt/mt66xx/wmt/stp_chrdev_bt.c
+@@ -890,7 +890,7 @@ static int BT_init(void)
+ 		goto error;
+ 
+ #if CREATE_NODE_DYNAMIC /* mknod replace */
+-	stpbt_class = class_create(THIS_MODULE, "stpbt");
++	stpbt_class = class_create("stpbt");
+ 	if (IS_ERR(stpbt_class))
+ 		goto error;
+ 	stpbt_dev = device_create(stpbt_class, NULL, dev, NULL, "stpbt");
+diff --git c/common/Makefile w/common/Makefile
+index 0b7525f..0f4674e 100644
+--- c/common/Makefile
++++ w/common/Makefile
+@@ -10,6 +10,12 @@ MTK_PLATFORM := $(subst ",,$(CONFIG_MTK_PLATFORM))
+ endif
+ endif
+ 
++# port: mainline has no CONFIG_MTK_PLATFORM; derive it from the combo chip
++# (CONSYS_6765 -> mt6765) or mt6765.c is not linked and the __weak empty ops win.
++ifeq ($(MTK_PLATFORM),)
++MTK_PLATFORM := mt$(patsubst CONSYS_%,%,$(subst ",,$(CONFIG_MTK_COMBO_CHIP)))
++endif
++
+ CONNSYS_PLATFORM := $(TARGET_BOARD_PLATFORM_WMT)
+ PRIORITY_TABLE_MTK_PLATFORM := mt6735
+ 
+@@ -111,7 +117,7 @@ endif
+ 
+ ###############################################################################
+ MODULE_NAME := wmt_drv
+-obj-y += $(MODULE_NAME).o
++obj-$(CONFIG_MTK_COMBO_COMM) += $(MODULE_NAME).o
+ 
+ ###############################################################################
+ # common_detect
+@@ -200,7 +206,7 @@ ccflags-y += -D CFG_WMT_EVB
+ endif
+ 
+ # Rissu: simplify things
+-ifneq ($(filter "CONSYS_%",$(CONFIG_MTK_COMBO_CHIP)),)
++ifneq ($(filter CONSYS_%,$(subst ",,$(CONFIG_MTK_COMBO_CHIP))),)  # port: auto.conf strings are unquoted now
+ $(MODULE_NAME)-objs += common_main/platform/$(MTK_PLATFORM).o
+ ifeq ($(shell test -e $(TOP)/common/common_main/platform/$(MTK_PLATFORM)_dbg.c; echo $$?),0)
+ $(MODULE_NAME)-objs += common_main/platform/$(MTK_PLATFORM)_dbg.o
+@@ -210,6 +216,7 @@ endif
+ #$(MODULE_NAME)-objs += common_main/platform/wmt_plat_stub.o
+ $(MODULE_NAME)-objs += common_main/platform/wmt_plat_alps.o
+ $(MODULE_NAME)-objs += common_main/platform/mtk_wcn_consys_hw.o
++$(MODULE_NAME)-objs += common_main/platform/mtk_wcn_consys_rmem.o
+ $(MODULE_NAME)-objs += common_main/platform/mtk_wcn_dump_util.o
+ $(MODULE_NAME)-objs += common_main/platform/mtk_wcn_cmb_hw.o
+ 
+@@ -247,6 +254,7 @@ $(MODULE_NAME)-objs += common_main/linux/wmt_alarm.o
+ 
+ ifeq ($(CONFIG_MTK_BTIF),$(filter $(CONFIG_MTK_BTIF),y m))
+ $(MODULE_NAME)-objs += common_main/linux/stp_btif.o
++$(MODULE_NAME)-objs += common_main/linux/btif_shim.o  # port: 8250-backed BTIF, replaces vendor btif driver
+ endif
+ 
+ $(MODULE_NAME)-objs += debug_utility/ring.o
+diff --git c/common/common_detect/wmt_detect.c w/common/common_detect/wmt_detect.c
+index b4b36a5..374a8b7 100644
+--- c/common/common_detect/wmt_detect.c
++++ w/common/common_detect/wmt_detect.c
+@@ -323,7 +323,7 @@ static int wmt_detect_driver_init(void)
+ 		goto err1;
+ 	}
+ 
+-	pDetectClass = class_create(THIS_MODULE, WMT_DETECT_DEVICE_NAME);
++	pDetectClass = class_create(WMT_DETECT_DEVICE_NAME);
+ 	if (IS_ERR(pDetectClass)) {
+ 		WMT_DETECT_PR_ERR("class create fail, error code(%ld)\n", PTR_ERR(pDetectClass));
+ 		goto err1;
+@@ -371,6 +371,9 @@ static void wmt_detect_driver_exit(void)
+ 	dev_t dev = MKDEV(gWmtDetectMajor, 0);
+ 
+ 	mtk_wcn_common_drv_exit();
++	/* port: the hw-init ioctl can register mtk_wmt without common init; drop it on unload. */
++	{ extern int mtk_wcn_consys_hw_deinit(void); mtk_wcn_consys_hw_deinit(); }
++	{ extern void btif_shim_exit(void); btif_shim_exit(); }
+ 
+ 	if (pDetectDev) {
+ 		device_destroy(pDetectClass, dev);
+diff --git c/common/common_main/core/psm_core.c w/common/common_main/core/psm_core.c
+index f4f7700..2a42e63 100644
+--- c/common/common_main/core/psm_core.c
++++ w/common/common_main/core/psm_core.c
+@@ -11,6 +11,7 @@
+  * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
+  */
+ 
++#include "mtk_connectivity_compat.h"
+ #include "osal_typedef.h"
+ #include "osal.h"
+ #include "psm_core.h"
+diff --git c/common/common_main/core/stp_core.c w/common/common_main/core/stp_core.c
+index a468c99..1cb7ff8 100644
+--- c/common/common_main/core/stp_core.c
++++ w/common/common_main/core/stp_core.c
+@@ -31,7 +31,9 @@
+ #define STP_DEL_SIZE   2	/* STP delimiter length */
+ #define STP_MAX_TX_TIMEOUT_LOOP 3
+ 
++#include <linux/moduleparam.h>
+ INT32 gStpDbgLvl = STP_LOG_INFO;
++module_param_named(stp_dbg, gStpDbgLvl, int, 0644);  /* port: runtime log level */
+ unsigned int chip_reset_only;
+ INT32 wmt_dbg_sdio_retry_ctrl = 1;
+ INT32 gCrcErrorCount;
+diff --git c/common/common_main/core/wmt_exp.c w/common/common_main/core/wmt_exp.c
+index 551c608..a104e9f 100644
+--- c/common/common_main/core/wmt_exp.c
++++ w/common/common_main/core/wmt_exp.c
+@@ -61,7 +61,9 @@ wmt_wlan_is_wifi_drv_own_cb mtk_wcn_wlan_is_wifi_drv_own;
+ OSAL_BIT_OP_VAR gBtWifiGpsState;
+ OSAL_BIT_OP_VAR gGpsFmState;
+ UINT32 gWifiProbed;
++#include <linux/moduleparam.h>
+ INT32 gWmtDbgLvl = WMT_LOG_INFO;
++module_param_named(wmt_dbg, gWmtDbgLvl, int, 0644);  /* port: runtime log level */
+ MTK_WCN_BOOL g_pwr_off_flag = MTK_WCN_BOOL_TRUE;
+ 
+ /*******************************************************************************
+diff --git c/common/common_main/core/wmt_lib.c w/common/common_main/core/wmt_lib.c
+index c5736fe..b668c0f 100644
+--- c/common/common_main/core/wmt_lib.c
++++ w/common/common_main/core/wmt_lib.c
+@@ -285,6 +285,8 @@ VOID ENABLE_PSM_MONITOR(VOID)
+ }
+ 
+ 
++extern int wmt_detect_set_chip_type(int chip_id);
++
+ INT32 wmt_lib_init(VOID)
+ {
+ 	INT32 iRet;
+@@ -298,12 +300,18 @@ INT32 wmt_lib_init(VOID)
+ 	/* 1. create: static allocation with zero initialization */
+ 	pDevWmt = &gDevWmt;
+ 	osal_memset(&gDevWmt, 0, sizeof(gDevWmt));
++	/*
++	 * Built-in (SOC) adapter: there is no combo chip and no wmt_launcher to
++	 * push COMBO_IOCTL_SET_CHIP_ID, so the type would stay
++	 * WMT_CHIP_TYPE_INVALID and every SOC-gated init step would be skipped.
++	 */
++	if (wmt_detect_get_chip_type() == WMT_CHIP_TYPE_INVALID)
++		wmt_detect_set_chip_type(0x6765);
+ 	if (wmt_detect_get_chip_type() == WMT_CHIP_TYPE_SOC) {
+ 		iRet = wmt_conf_read_file();
+-		if (iRet) {
+-			WMT_ERR_FUNC("read wmt config file fail(%d)\n", iRet);
+-			return -1;
+-		}
++		if (iRet)
++			WMT_ERR_FUNC("read wmt config file fail(%d), continuing\n",
++				     iRet);
+ 	}
+ 	osal_op_history_init(&pDevWmt->wmtd_op_history, 16);
+ 	osal_op_history_init(&pDevWmt->worker_op_history, 8);
+diff --git c/common/common_main/linux/btif_shim.c w/common/common_main/linux/btif_shim.c
+new file mode 100644
+index 0000000..b41af47
+--- /dev/null
++++ w/common/common_main/linux/btif_shim.c
+@@ -0,0 +1,261 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * port: replacement for the vendor MediaTek BTIF driver (drivers/misc/mediatek/btif),
++ * which is not available for this tree.  BTIF is a 16550-like byte pipe between the AP
++ * and the CONNSYS MCU; mainline drives it with 8250 (PORT_MTK_BTIF, "mediatek,mtk-btif").
++ * Without a DT node we register the 8250 port here, open it in-kernel, put a tiny line
++ * discipline on it that hands received bytes to STP, and implement the 12 mtk_wcn_btif_*
++ * calls stp_btif.c makes.  No DMA (the vendor driver used APDMA); PIO is plenty for WMT.
++ *
++ * ponytail: single owner, single port; dpidle/loopback/debug calls are no-ops.
++ */
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/err.h>
++#include <linux/fs.h>
++#include <linux/io.h>
++#include <linux/irq.h>
++#include <linux/irqdomain.h>
++#include <linux/kthread.h>
++#include <linux/moduleparam.h>
++#include <linux/of.h>
++#include <linux/of_irq.h>
++#include <linux/serial_8250.h>
++#include <linux/tty.h>
++#include <linux/tty_ldisc.h>
++#include <dt-bindings/clock/mt6765-clk.h>
++#include <dt-bindings/interrupt-controller/arm-gic.h>
++#include <dt-bindings/interrupt-controller/irq.h>
++#include "osal_typedef.h"
++#include "mtk_btif_exp.h"
++
++#define BTIF_BASE	0x1100c000	/* stock DT btif@1100c000 */
++#define BTIF_SPI	112		/* stock: <GIC_SPI 0x70 IRQ_TYPE_LEVEL_LOW> */
++#define BTIF_FAKELCR	0x0c		/* vendor: 0 = normal mode (8250 writes LCR here) */
++#define BTIF_TRI_LVL	0x60		/* vendor: TX threshold [3:0], RX threshold [6:4] */
++#define BTIF_WAK	0x64		/* vendor btif_plat: BTIF_WAK, bit0 = wake CONNSYS */
++#define BTIF_TX_THRE	8		/* vendor BTIF_TX_FIFO_SIZE 16 / 2 */
++#define BTIF_ID		1UL
++
++static struct {
++	int line;
++	struct clk *clk;
++	void __iomem *base;
++	struct file *filp;
++	struct tty_struct *tty;
++	MTK_WCN_BTIF_RX_CB rx_cb;
++	struct task_struct *rxd;	/* only so STP has a thread to name/dump */
++} sh = { .line = -1 };
++
++static bool rxdump, txdump;
++module_param(rxdump, bool, 0644);
++module_param(txdump, bool, 0644);
++
++static void shim_receive_buf(struct tty_struct *tty, const u8 *cp, const u8 *fp, size_t count)
++{
++	MTK_WCN_BTIF_RX_CB cb = READ_ONCE(sh.rx_cb);
++
++	if (rxdump)
++		print_hex_dump(KERN_INFO, "[BTIF-RX] ", DUMP_PREFIX_OFFSET, 16, 1, cp, min_t(size_t, count, 64), false);
++
++	if (cb && count)
++		cb((const PUINT8)cp, count);
++}
++
++static int shim_ldisc_open(struct tty_struct *tty)
++{
++	tty->receive_room = 65536;
++	return 0;
++}
++
++static struct tty_ldisc_ops shim_ldisc = {
++	.owner = THIS_MODULE,
++	.num = N_DEVELOPMENT,
++	.name = "mtk_btif_shim",
++	.open = shim_ldisc_open,
++	.receive_buf = shim_receive_buf,
++};
++
++static int rxd_fn(void *unused)
++{
++	while (!kthread_should_stop()) {
++		set_current_state(TASK_INTERRUPTIBLE);
++		schedule();
++	}
++	__set_current_state(TASK_RUNNING);
++	return 0;
++}
++
++static int shim_register_port(void)
++{
++	struct of_phandle_args clkspec = { .args_count = 1, .args = { CLK_IFR_BTIF } };
++	struct irq_fwspec fw = { .param_count = 3,
++				 .param = { GIC_SPI, BTIF_SPI, IRQ_TYPE_LEVEL_LOW } };
++	struct uart_8250_port up = {};
++	struct device_node *np;
++	int irq, ret;
++
++	clkspec.np = of_find_compatible_node(NULL, NULL, "mediatek,mt6765-infracfg");
++	sh.clk = clkspec.np ? of_clk_get_from_provider(&clkspec) : ERR_PTR(-ENODEV);
++	of_node_put(clkspec.np);
++	if (IS_ERR(sh.clk))
++		return PTR_ERR(sh.clk);
++	ret = clk_prepare_enable(sh.clk);
++	if (ret)
++		goto put_clk;
++
++	np = of_find_compatible_node(NULL, NULL, "mediatek,mt6577-sysirq");
++	fw.fwnode = of_fwnode_handle(np);
++	irq = np ? irq_create_fwspec_mapping(&fw) : 0;
++	of_node_put(np);
++	if (!irq) {
++		ret = -ENXIO;
++		goto off_clk;
++	}
++
++	sh.base = ioremap(BTIF_BASE, 0x1000);
++	if (!sh.base) {
++		ret = -ENOMEM;
++		goto off_clk;
++	}
++	up.port.mapbase = BTIF_BASE;
++	up.port.mapsize = 0x1000;
++	up.port.membase = sh.base;
++	up.port.irq = irq;
++	up.port.uartclk = 26000000;	/* BTIF ignores the divisor; 8250 needs a value */
++	up.port.regshift = 2;
++	up.port.iotype = UPIO_MEM32;
++	up.port.type = PORT_MTK_BTIF;
++	up.port.flags = UPF_FIXED_TYPE | UPF_FIXED_PORT;
++	/* THRE means "TX FIFO at/below threshold", not empty: the vendor driver writes
++	 * at most FIFO_SIZE - THRE bytes per THRE.  16 per THRE overflows and drops bytes. */
++	up.port.fifosize = 16;
++	up.tx_loadsz = 16 - BTIF_TX_THRE;
++	sh.line = serial8250_register_8250_port(&up);
++	if (sh.line < 0) {
++		ret = sh.line;
++		goto unmap;
++	}
++	pr_info("[BTIF-SHIM] BTIF registered as ttyS%d (irq %d)\n", sh.line, irq);
++	return 0;
++unmap:
++	iounmap(sh.base);
++	sh.base = NULL;
++off_clk:
++	clk_disable_unprepare(sh.clk);
++put_clk:
++	clk_put(sh.clk);
++	sh.clk = NULL;
++	sh.line = -1;
++	return ret;
++}
++
++INT32 mtk_wcn_btif_open(PINT8 owner, PULONG id)
++{
++	struct ktermios t;
++	char path[24];
++	int ret;
++
++	if (sh.filp)
++		return -EBUSY;
++	if (sh.line < 0) {
++		ret = shim_register_port();
++		if (ret) {
++			pr_err("[BTIF-SHIM] port register failed %d\n", ret);
++			return ret;
++		}
++		ret = tty_register_ldisc(&shim_ldisc);
++		if (ret)
++			return ret;
++	}
++	snprintf(path, sizeof(path), "/dev/ttyS%d", sh.line);
++	sh.filp = filp_open(path, O_RDWR | O_NOCTTY | O_NONBLOCK, 0);
++	if (IS_ERR(sh.filp)) {
++		ret = PTR_ERR(sh.filp);
++		sh.filp = NULL;
++		return ret;
++	}
++	sh.tty = ((struct tty_file_private *)sh.filp->private_data)->tty;
++	t = sh.tty->termios;
++	t.c_iflag = 0;
++	t.c_oflag = 0;
++	t.c_lflag = 0;
++	t.c_cflag = CS8 | CREAD | CLOCAL | B921600;
++	tty_set_termios(sh.tty, &t);
++	/* vendor hal_btif_hw_init: normal mode, TX thre 8, RX thre 1, loopback off */
++	writel(0, sh.base + BTIF_FAKELCR);
++	writel(BTIF_TX_THRE | (1 << 4), sh.base + BTIF_TRI_LVL);
++	ret = tty_set_ldisc(sh.tty, N_DEVELOPMENT);
++	if (ret) {
++		filp_close(sh.filp, NULL);
++		sh.filp = NULL;
++		return ret;
++	}
++	if (!sh.rxd)
++		sh.rxd = kthread_run(rxd_fn, NULL, "btif_rxd");
++	*id = BTIF_ID;
++	pr_info("[BTIF-SHIM] opened by %s\n", owner);
++	return 0;
++}
++
++INT32 mtk_wcn_btif_close(ULONG id)
++{
++	WRITE_ONCE(sh.rx_cb, NULL);
++	if (sh.filp)
++		filp_close(sh.filp, NULL);	/* releasing the tty drops our ldisc */
++	sh.filp = NULL;
++	sh.tty = NULL;
++	return 0;
++}
++
++INT32 mtk_wcn_btif_write(ULONG id, const PUINT8 buf, UINT32 len)
++{
++	if (!sh.tty)
++		return -ENODEV;
++	if (txdump)
++		print_hex_dump(KERN_INFO, "[BTIF-TX] ", DUMP_PREFIX_OFFSET, 16, 1, buf, min_t(u32, len, 32), false);
++	return sh.tty->ops->write(sh.tty, buf, len);
++}
++
++INT32 mtk_wcn_btif_rx_cb_register(ULONG id, MTK_WCN_BTIF_RX_CB cb)
++{
++	WRITE_ONCE(sh.rx_cb, cb);
++	return 0;
++}
++
++INT32 mtk_wcn_btif_wakeup_consys(ULONG id)
++{
++	if (!sh.base)
++		return -ENODEV;
++	writel(1, sh.base + BTIF_WAK);
++	udelay(100);
++	writel(0, sh.base + BTIF_WAK);
++	return 0;
++}
++
++INT32 mtk_wcn_btif_dpidle_ctrl(ULONG id, enum _ENUM_BTIF_DPIDLE_ en) { return 0; }
++INT32 mtk_wcn_btif_loopback_ctrl(ULONG id, enum _ENUM_BTIF_LPBK_MODE_ en) { return 0; }
++INT32 mtk_wcn_btif_dbg_ctrl(ULONG id, enum _ENUM_BTIF_DBG_ID_ flag) { return 0; }
++MTK_WCN_BOOL mtk_wcn_btif_parser_wmt_evt(ULONG id, const PUINT8 str, UINT32 len) { return 0; }
++INT32 mtk_btif_exp_rx_has_pending_data(ULONG id) { return 0; }
++INT32 mtk_btif_exp_tx_has_pending_data(ULONG id)
++{
++	return sh.tty ? tty_chars_in_buffer(sh.tty) > 0 : 0;
++}
++struct task_struct *mtk_btif_exp_rx_thread_get(ULONG id) { return sh.rxd; }
++
++void btif_shim_exit(void)
++{
++	mtk_wcn_btif_close(BTIF_ID);
++	if (sh.rxd)
++		kthread_stop(sh.rxd);
++	sh.rxd = NULL;
++	if (sh.line >= 0) {
++		tty_unregister_ldisc(&shim_ldisc);
++		serial8250_unregister_port(sh.line);
++		iounmap(sh.base);
++		clk_disable_unprepare(sh.clk);
++		clk_put(sh.clk);
++		sh.line = -1;
++	}
++}
+diff --git c/common/common_main/linux/include/mtk_btif_exp.h w/common/common_main/linux/include/mtk_btif_exp.h
+new file mode 100644
+index 0000000..371fca2
+--- /dev/null
++++ w/common/common_main/linux/include/mtk_btif_exp.h
+@@ -0,0 +1,66 @@
++/*
++ * Copyright (C) 2016 MediaTek Inc.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * Minimal stand-in for the vendor BTIF export header.
++ *
++ * The Bluetooth half of the combo is not ported: common_main/linux/stp_btif.c
++ * needs the separate MediaTek "btif" driver (drivers/misc/mediatek/btif/),
++ * which is not part of this import, so that object is left out of the build
++ * (see common/Makefile).  btm_core.h and stp_btif.h still include this header
++ * for the shared types, and the STP/BTM core uses the RX callback type, so
++ * only the types and the few constants those headers reference are defined
++ * here.  Nothing in the WLAN path depends on the missing functions.
++ */
++
++#ifndef _MTK_BTIF_EXP_H_
++#define _MTK_BTIF_EXP_H_
++
++#include "osal_typedef.h"
++
++/* STP hands this callback to the BTIF RX path (see mtk_wcn_stp_rxcb_register). */
++typedef INT32 (*MTK_WCN_BTIF_RX_CB)(const PUINT8 p_buf, UINT32 len);
++
++enum _ENUM_BTIF_LPBK_MODE_ {
++	BTIF_LPBK_DISABLE = 0,
++	BTIF_LPBK_ENABLE
++};
++
++enum _ENUM_BTIF_DPIDLE_ {
++	BTIF_DPIDLE_DISABLE = 0,
++	BTIF_DPIDLE_ENABLE
++};
++
++enum _ENUM_BTIF_DBG_ID_ {
++	BTIF_DUMP_LOG = 0,
++	BTIF_DUMP_BTIF_IRQ,
++	BTIF_DUMP_BTIF_REG
++};
++
++/* Used by the WMT control path only; values follow the vendor BTIF driver. */
++/* BTIF_OWNER_NAME: stp_btif.c defines its own (port) */
++#define BTIF_WAKEUP_IRQ 0x0
++#define BTIF_WAK_ADDR_OFFSET 0x0
++#define BTIF_RXD_BE_BLOCKED_DETECT 0
++
++
++/* port: implemented by common_main/linux/btif_shim.c (8250-backed BTIF) */
++struct task_struct;
++INT32 mtk_wcn_btif_open(PINT8 owner, PULONG id);
++INT32 mtk_wcn_btif_close(ULONG id);
++INT32 mtk_wcn_btif_write(ULONG id, const PUINT8 buf, UINT32 len);
++INT32 mtk_wcn_btif_rx_cb_register(ULONG id, MTK_WCN_BTIF_RX_CB cb);
++INT32 mtk_wcn_btif_wakeup_consys(ULONG id);
++INT32 mtk_wcn_btif_dpidle_ctrl(ULONG id, enum _ENUM_BTIF_DPIDLE_ en);
++INT32 mtk_wcn_btif_loopback_ctrl(ULONG id, enum _ENUM_BTIF_LPBK_MODE_ en);
++INT32 mtk_wcn_btif_dbg_ctrl(ULONG id, enum _ENUM_BTIF_DBG_ID_ flag);
++MTK_WCN_BOOL mtk_wcn_btif_parser_wmt_evt(ULONG id, const PUINT8 str, UINT32 len);
++INT32 mtk_btif_exp_rx_has_pending_data(ULONG id);
++INT32 mtk_btif_exp_tx_has_pending_data(ULONG id);
++struct task_struct *mtk_btif_exp_rx_thread_get(ULONG id);
++void btif_shim_exit(void);
++
++#endif /* _MTK_BTIF_EXP_H_ */
+diff --git c/common/common_main/linux/include/osal.h w/common/common_main/linux/include/osal.h
+index 374f509..9e1b3b5 100644
+--- c/common/common_main/linux/include/osal.h
++++ w/common/common_main/linux/include/osal.h
+@@ -134,6 +134,14 @@ do { \
+ ********************************************************************************
+ */
+ 
++/* 6.15 renamed from_timer() to timer_container_of(); keep the vendor
++ * call sites working on both.
++ */
++#ifndef from_timer
++#define from_timer(var, callback_timer, timer_fieldname) \
++	container_of(callback_timer, typeof(*var), timer_fieldname)
++#endif
++
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0))
+ typedef VOID(*P_TIMEOUT_HANDLER) (struct timer_list *t);
+ typedef struct timer_list *timer_handler_arg;
+diff --git c/common/common_main/linux/osal.c w/common/common_main/linux/osal.c
+index 93b34fe..d79575c 100644
+--- c/common/common_main/linux/osal.c
++++ w/common/common_main/linux/osal.c
+@@ -31,6 +31,7 @@
+ ********************************************************************************
+ */
+ 
++#include <linux/timer.h>
+ #include "osal.h"
+ #include "connectivity_build_in_adapter.h"
+ 
+@@ -460,8 +461,9 @@ static INT32 osal_thread_sched_retrieve(P_OSAL_THREAD pThread, P_OSAL_THREAD_SCH
+ 
+ 	sched->time = sec*1000 + usec/1000;
+ 	sched->exec = se.sum_exec_runtime;
+-	sched->runnable = se.statistics.wait_sum;
+-	sched->iowait = se.statistics.iowait_sum;
++	/* TODO(port): struct sched_entity lost its statistics member in 6.6 */
++	sched->runnable = 0;
++	sched->iowait = 0;
+ 
+ 	return 0;
+ #else
+@@ -852,7 +854,7 @@ INT32 osal_timer_stop(P_OSAL_TIMER pTimer)
+ {
+ 	struct timer_list *timer = &pTimer->timer;
+ 
+-	del_timer(timer);
++	timer_delete(timer);
+ 	return 0;
+ }
+ 
+@@ -860,7 +862,7 @@ INT32 osal_timer_stop_sync(P_OSAL_TIMER pTimer)
+ {
+ 	struct timer_list *timer = &pTimer->timer;
+ 
+-	del_timer_sync(timer);
++	timer_delete_sync(timer);
+ 	return 0;
+ }
+ 
+diff --git c/common/common_main/linux/stp_sdio.c w/common/common_main/linux/stp_sdio.c
+index 584e122..6a3bf22 100644
+--- c/common/common_main/linux/stp_sdio.c
++++ w/common/common_main/linux/stp_sdio.c
+@@ -2824,7 +2824,9 @@ static INT32 stp_sdio_remove(const MTK_WCN_HIF_SDIO_CLTCTX clt_ctx)
+ 	osal_signal_deinit(&g_stp_sdio_host_info.isr_check_complete);
+ 	STPSDIO_PR_DBG("destroy STP-SDIO tx_rx_thread\n");
+ #else
+-	flush_scheduled_work();
++	/* TODO(port): flush_scheduled_work() is deprecated in 6.x; SDIO
++	 * teardown cancels its own work items below.
++	 */
+ 	STPSDIO_PR_INFO("flush scheduled work end\n");
+ #endif
+ 
+@@ -3579,7 +3581,9 @@ static VOID stp_sdio_exit(VOID)
+ 	mtk_wcn_hif_sdio_client_unreg(&g_stp_sdio_cltinfo);
+ 
+ 	/* 4 <1.2> stop Tx tasklet/Rx work queue of the host */
+-	flush_scheduled_work();
++	/* TODO(port): flush_scheduled_work() is deprecated in 6.x; SDIO
++	 * teardown cancels its own work items below.
++	 */
+ 	STPSDIO_PR_DBG("flush scheduled work end\n");
+ 
+ 	/* 4 <1.3> return ownership to firmware of the host */
+diff --git c/common/common_main/linux/stp_uart.c w/common/common_main/linux/stp_uart.c
+index 4a83708..0a61197 100644
+--- c/common/common_main/linux/stp_uart.c
++++ w/common/common_main/linux/stp_uart.c
+@@ -44,8 +44,12 @@
+ 
+ #define HCIUARTSETPROTO        _IOW('U', 200, int)
+ 
++#ifndef MAX
+ #define MAX(a, b)        ((a) > (b) ? (a) : (b))
++#endif
++#ifndef MIN
+ #define MIN(a, b)        ((a) < (b) ? (a) : (b))
++#endif
+ 
+ #define PFX                         "[UART] "
+ #define UART_LOG_LOUD                 4
+@@ -78,6 +82,8 @@ do { if (gDbgLevel >= UART_LOG_ERR)	\
+ 
+ 
+ #include <linux/kfifo.h>
++
++static struct tty_ldisc_ops stp_uart_ldisc;
+ #define LDISC_RX_TASKLET  0
+ #define LDISC_RX_WORK  1
+ 
+@@ -204,7 +210,7 @@ static INT32 stp_uart_tty_open(struct tty_struct *tty)
+ 	UART_PR_DBG("stp_uart_tty_opentty: %p\n", tty);
+ 
+ 	tty->receive_room = 65536;
+-	tty->port->low_latency = 1;
++	/* tty_port.low_latency was removed in 5.14; low latency is the default */
+ 
+ 	/* Flush any pending characters in the driver and line discipline. */
+ 
+@@ -238,7 +244,7 @@ static VOID stp_uart_tty_close(struct tty_struct *tty)
+ 	mtk_wcn_stp_register_if_tx(STP_UART_IF_TX, NULL);
+ }
+ 
+-/* stp_uart_tty_wakeup()
++/* stp_uart_tty_wakeup(struct tty_struct *tty)
+  *
+  *    Callback for transmit wakeup. Called when low level
+  *    device driver can accept more send data.
+@@ -255,7 +261,7 @@ static VOID stp_uart_tty_wakeup(struct tty_struct *tty)
+ 	/* stp_uart_tx_wakeup(tty); */
+ }
+ 
+-/* stp_uart_tty_receive()
++/* stp_uart_tty_receive(struct tty_struct *tty, const u8 *cp, const u8 *fp, size_t count)
+  *
+  *     Called by tty low level driver when receive data is
+  *     available.
+@@ -339,7 +345,7 @@ static VOID stp_uart_rx_handling(ULONG func_data)
+ 		UART_PR_INFO("finish, fifolen(%d)\n", kfifo_len(g_stp_uart_rx_fifo));
+ }
+ 
+-static VOID stp_uart_tty_receive(struct tty_struct *tty, const unsigned char *data, PINT8 flags, INT32 count)
++static VOID stp_uart_tty_receive(struct tty_struct *tty, const u8 *cp, const u8 *fp, size_t count)
+ {
+ 	UINT32 fifo_avail_len = LDISC_RX_FIFO_SIZE - kfifo_len(g_stp_uart_rx_fifo);
+ 	UINT32 how_much_put = 0;
+@@ -360,7 +366,7 @@ static VOID stp_uart_tty_receive(struct tty_struct *tty, const unsigned char *da
+ 	/*How much empty seat? */
+ 	if (fifo_avail_len > 0) {
+ 		/* UART_PR_INFO ("fifo left(%d), count(%d)\n", fifo_avail_len, count); */
+-		how_much_put = kfifo_in(g_stp_uart_rx_fifo, (PUINT8) data, count);
++		how_much_put = kfifo_in(g_stp_uart_rx_fifo, (PUINT8) cp, count);
+ 
+ 		/*schedule it! */
+ 		tasklet_schedule(&g_stp_uart_rx_fifo_tasklet);
+@@ -475,7 +481,7 @@ static VOID stp_uart_rx_worker(struct work_struct *work)
+ 	}
+ }
+ 
+-/* stp_uart_tty_receive()
++/* stp_uart_tty_receive(struct tty_struct *tty, const u8 *cp, const u8 *fp, size_t count)
+  *
+  *     Called by tty low level driver when receive data is
+  *     available.
+@@ -487,7 +493,7 @@ static VOID stp_uart_rx_worker(struct work_struct *work)
+  *
+  * Return Value:    None
+  */
+-static VOID stp_uart_tty_receive(struct tty_struct *tty, const PUINT8 data, PINT8 flags, INT32 count)
++static VOID stp_uart_tty_receive(struct tty_struct *tty, const u8 *cp, const u8 *fp, size_t count)
+ {
+ 	UINT32 written;
+ 
+@@ -506,7 +512,7 @@ static VOID stp_uart_tty_receive(struct tty_struct *tty, const PUINT8 data, PINT
+ 
+ 	/* need to lock fifo? skip for single writer single reader! */
+ 
+-	written = kfifo_in(g_stp_uart_rx_fifo, (PUINT8) data, count);
++	written = kfifo_in(g_stp_uart_rx_fifo, (PUINT8) cp, count);
+ 	/* pr_debug("uart_rx:%d,wr:%d\n\r",count,written); */
+ 
+ 	queue_work(g_stp_uart_rx_wq, g_stp_uart_rx_work);
+@@ -517,7 +523,7 @@ static VOID stp_uart_tty_receive(struct tty_struct *tty, const PUINT8 data, PINT
+ 
+ #else
+ 
+-static VOID stp_uart_tty_receive(struct tty_struct *tty, const PUINT8 data, PINT8 flags, INT32 count)
++static VOID stp_uart_tty_receive(struct tty_struct *tty, const u8 *cp, const u8 *fp, size_t count)
+ {
+ 
+ #if 0
+@@ -557,7 +563,7 @@ static VOID stp_uart_tty_receive(struct tty_struct *tty, const PUINT8 data, PINT
+ }
+ #endif
+ 
+-/* stp_uart_tty_ioctl()
++/* stp_uart_tty_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned long arg)
+  *
+  *    Process IOCTL system call for the tty device.
+  *
+@@ -570,19 +576,18 @@ static VOID stp_uart_tty_receive(struct tty_struct *tty, const PUINT8 data, PINT
+  *
+  * Return Value:    Command dependent
+  */
+-static INT32 stp_uart_tty_ioctl(struct tty_struct *tty, struct file *file, UINT32 cmd, ULONG arg)
++static INT32 stp_uart_tty_ioctl(struct tty_struct *tty, unsigned int cmd, unsigned long arg)
+ {
+ 	INT32 err = 0;
+ 
+ 	switch (cmd) {
+ 	case HCIUARTSETPROTO:
+-		UART_PR_DBG("<!!> Set low_latency to TRUE <!!>\n");
+-		tty->port->low_latency = 1;
++		UART_PR_DBG("<!!> HCIUARTSETPROTO <!!>\n");
+ 
+ 		break;
+ 	default:
+ 		UART_PR_DBG("<!!> n_tty_ioctl_helper <!!>\n");
+-		err = n_tty_ioctl_helper(tty, file, cmd, arg);
++		err = n_tty_ioctl_helper(tty, cmd, arg);
+ 		break;
+ 	};
+ 
+@@ -710,9 +715,11 @@ INT32 mtk_wcn_uart_tx(const PUINT8 data, const UINT32 size, PUINT32 written_size
+ 	return 0;
+ }
+ 
+-static INT32 mtk_wcn_stp_uart_init(VOID)
++static struct tty_ldisc_ops stp_uart_ldisc;
++
++static INT32
++mtk_wcn_stp_uart_init(VOID)
+ {
+-	static struct tty_ldisc_ops stp_uart_ldisc;
+ 	INT32 err;
+ 	INT32 fifo_init_done = 0;
+ 
+@@ -757,7 +764,7 @@ static INT32 mtk_wcn_stp_uart_init(VOID)
+ 
+ 	/* Register the tty discipline */
+ 	memset(&stp_uart_ldisc, 0, sizeof(stp_uart_ldisc));
+-	stp_uart_ldisc.magic = TTY_LDISC_MAGIC;
++	stp_uart_ldisc.num = N_MTKSTP;
+ 	stp_uart_ldisc.name = "n_mtkstp";
+ 	stp_uart_ldisc.open = stp_uart_tty_open;
+ 	stp_uart_ldisc.close = stp_uart_tty_close;
+@@ -769,7 +776,7 @@ static INT32 mtk_wcn_stp_uart_init(VOID)
+ 	stp_uart_ldisc.write_wakeup = stp_uart_tty_wakeup;
+ 	stp_uart_ldisc.owner = THIS_MODULE;
+ 
+-	err = tty_register_ldisc(N_MTKSTP, &stp_uart_ldisc);
++	err = tty_register_ldisc(&stp_uart_ldisc);
+ 	if (err) {
+ 		UART_PR_ERR("MTK STP line discipline registration failed. (%d)\n", err);
+ 		goto init_err;
+@@ -811,9 +818,7 @@ static VOID mtk_wcn_stp_uart_exit(VOID)
+ 	mtk_wcn_stp_register_if_tx(STP_UART_IF_TX, NULL);	/* unregister if_tx function */
+ 
+ 	/* Release tty registration of line discipline */
+-	err = tty_unregister_ldisc(N_MTKSTP);
+-	if (err)
+-		UART_PR_ERR("Can't unregister MTK STP line discipline (%d)\n", err);
++	tty_unregister_ldisc(&stp_uart_ldisc);
+ 
+ #if (LDISC_RX == LDISC_RX_TASKLET)
+ 	tasklet_kill(&g_stp_uart_rx_fifo_tasklet);
+diff --git c/common/common_main/linux/wmt_alarm.c w/common/common_main/linux/wmt_alarm.c
+index 1ad1c26..a739f0a 100644
+--- c/common/common_main/linux/wmt_alarm.c
++++ w/common/common_main/linux/wmt_alarm.c
+@@ -3,11 +3,11 @@
+  * Copyright (c) 2019 MediaTek Inc.
+  */
+ 
+-#include <linux/alarmtimer.h>
+ #include <linux/spinlock.h>
+ #include "osal.h"
+ #include "wmt_alarm.h"
+ #include "wmt_lib.h"
++#include <linux/alarmtimer.h>
+ 
+ #define WMT_ALARM_STATE_UNINIT	0x0
+ #define WMT_ALARM_STATE_DISABLE	0x01
+@@ -64,8 +64,7 @@ static void wmt_alarm_dmp_info_handler(struct work_struct *work)
+ 	}
+ }
+ 
+-static enum alarmtimer_restart alarm_timer_handler(struct alarm *alarm,
+-	ktime_t now)
++static void alarm_timer_handler(struct alarm *alarm, ktime_t now)
+ {
+ 	ktime_t kt;
+ 
+@@ -73,11 +72,10 @@ static enum alarmtimer_restart alarm_timer_handler(struct alarm *alarm,
+ 
+ 	schedule_work(&g_wmt_alarm.dmp_info_worker);
+ 	kt = ktime_set(g_wmt_alarm.alarm_sec, 0);
+-	alarm_start_relative(&g_wmt_alarm.alarm_timer, kt);
++	alarm_start_timer(&g_wmt_alarm.alarm_timer, kt, true);
+ 
+ 	spin_unlock_irqrestore(&g_wmt_alarm.alarm_lock, g_wmt_alarm.flags);
+ 
+-	return ALARMTIMER_NORESTART;
+ }
+ 
+ static int _wmt_alarm_start_timer_nolock(unsigned int sec)
+@@ -86,7 +84,7 @@ static int _wmt_alarm_start_timer_nolock(unsigned int sec)
+ 
+ 	g_wmt_alarm.alarm_sec = sec;
+ 	kt = ktime_set(g_wmt_alarm.alarm_sec, 0);
+-	alarm_start_relative(&g_wmt_alarm.alarm_timer, kt);
++	alarm_start_timer(&g_wmt_alarm.alarm_timer, kt, true);
+ 	g_wmt_alarm.alarm_state = WMT_ALARM_STATE_ENABLE;
+ 
+ 	pr_info("[wmt_alarm] alarm timer enabled timeout=[%d]", g_wmt_alarm.alarm_sec);
+diff --git c/common/common_main/linux/wmt_dev.c w/common/common_main/linux/wmt_dev.c
+index 3fa50e1..1cc80b0 100644
+--- c/common/common_main/linux/wmt_dev.c
++++ w/common/common_main/linux/wmt_dev.c
+@@ -1543,7 +1543,7 @@ static INT32 WMT_mmap(struct file *pFile, struct vm_area_struct *pVma)
+ 	unsigned long bufId = pVma->vm_pgoff;
+ 	P_CONSYS_EMI_ADDR_INFO emiInfo = mtk_wcn_consys_soc_get_emi_phy_add();
+ 
+-	pVma->vm_flags &= ~(VM_WRITE | VM_MAYWRITE);
++	vm_flags_clear(pVma, VM_WRITE | VM_MAYWRITE);
+ 	WMT_INFO_FUNC("WMT_mmap start:%lu end:%lu size: %lu buffer id=%lu\n",
+ 		pVma->vm_start, pVma->vm_end,
+ 		pVma->vm_end - pVma->vm_start, bufId);
+@@ -1646,7 +1646,7 @@ static INT32 WMT_init(VOID)
+ 	WMT_INFO_FUNC("driver(major %d) installed\n", gWmtMajor);
+ 
+ #if WMT_CREATE_NODE_DYNAMIC
+-	wmt_class = class_create(THIS_MODULE, "stpwmt");
++	wmt_class = class_create("stpwmt");
+ 	if (IS_ERR(wmt_class))
+ 		goto error;
+ 	wmt_dev = device_create(wmt_class, NULL, devID, NULL, "stpwmt");
+diff --git c/common/common_main/platform/mt6765.c w/common/common_main/platform/mt6765.c
+index 6df15bf..7b67054 100644
+--- c/common/common_main/platform/mt6765.c
++++ w/common/common_main/platform/mt6765.c
+@@ -74,6 +74,8 @@
+ #endif
+ 
+ #include <linux/of_reserved_mem.h>
++#include <linux/pm_domain.h>
++#include <linux/pm_runtime.h>
+ 
+ 
+ /*******************************************************************************
+@@ -432,15 +434,34 @@ static UINT32 consys_jtag_flag_ctrl(UINT32 enable)
+ 	return 0;
+ }
+ 
++/*
++ * port: on the 4.19 vendor kernel "conn" was the scpsys CONN power domain
++ * exposed as a clock.  Mainline has it as genpd MT6765_POWER_DOMAIN_CONN (1)
++ * under "mediatek,mt6765-power-controller".  Attach it here when the DT node
++ * has no power-domains property yet, and drive it with runtime PM.
++ */
++#define MT6765_CONN_PD_INDEX 1
++extern struct platform_device *g_pdev;
+ static INT32 consys_clk_get_from_dts(struct platform_device *pdev)
+ {
+-	clk_scp_conn_main = devm_clk_get(&pdev->dev, "conn");
+-	if (IS_ERR(clk_scp_conn_main)) {
+-		WMT_PLAT_PR_ERR("[CCF]cannot get clk_scp_conn_main clock.\n");
+-		return PTR_ERR(clk_scp_conn_main);
+-	}
+-	WMT_PLAT_PR_DBG("[CCF]clk_scp_conn_main=%p\n", clk_scp_conn_main);
++	struct of_phandle_args pd = { .args_count = 1, .args = { MT6765_CONN_PD_INDEX } };
++	int ret;
+ 
++	if (!pdev->dev.pm_domain) {
++		pd.np = of_find_compatible_node(NULL, NULL, "mediatek,mt6765-power-controller");
++		if (!pd.np) {
++			WMT_PLAT_PR_ERR("no mt6765 power controller node\n");
++			return -ENODEV;
++		}
++		ret = of_genpd_add_device(&pd, &pdev->dev);
++		of_node_put(pd.np);
++		if (ret) {
++			WMT_PLAT_PR_ERR("attach CONN power domain failed %d\n", ret);
++			return ret;
++		}
++	}
++	pm_runtime_enable(&pdev->dev);
++	WMT_PLAT_PR_INFO("CONN power domain attached (runtime PM)\n");
+ 	return 0;
+ }
+ 
+@@ -453,10 +474,10 @@ static INT32 consys_pmic_get_from_dts(struct platform_device *pdev)
+ 	reg_VCN28 = regulator_get(&pdev->dev, "vcn28");
+ 	if (!reg_VCN28)
+ 		WMT_PLAT_PR_ERR("Regulator_get VCN_2V8 fail\n");
+-	reg_VCN33_BT = regulator_get(&pdev->dev, "vcn33_bt");
++	reg_VCN33_BT = regulator_get(&pdev->dev, "vcn33-bt") /* port: mainline name */;
+ 	if (!reg_VCN33_BT)
+ 		WMT_PLAT_PR_ERR("Regulator_get VCN33_BT fail\n");
+-	reg_VCN33_WIFI = regulator_get(&pdev->dev, "vcn33_wifi");
++	reg_VCN33_WIFI = regulator_get(&pdev->dev, "vcn33-wifi") /* port: mainline name */;
+ 	if (!reg_VCN33_WIFI)
+ 		WMT_PLAT_PR_ERR("Regulator_get VCN33_WIFI fail\n");
+ #endif
+@@ -574,10 +595,8 @@ static INT32 consys_hw_power_ctrl(MTK_WCN_BOOL enable)
+ 
+ 	if (enable) {
+ #if CONSYS_PWR_ON_OFF_API_AVAILABLE
+-		iRet = clk_prepare_enable(clk_scp_conn_main);
+-		if (iRet)
+-			WMT_PLAT_PR_ERR("clk_prepare_enable(clk_scp_conn_main) fail(%d)\n", iRet);
+-		WMT_PLAT_PR_DBG("clk_prepare_enable(clk_scp_conn_main) ok\n");
++		iRet = pm_runtime_resume_and_get(&g_pdev->dev);
++		WMT_PLAT_PR_INFO("CONN power domain on: %d\n", iRet);
+ #else
+ 		/* turn on SPM clock gating enable PWRON_CONFG_EN 0x10006000 32'h0b160001 */
+ 		CONSYS_REG_WRITE((conn_reg.spm_base + CONSYS_PWRON_CONFG_EN_OFFSET),
+@@ -675,8 +694,10 @@ static INT32 consys_hw_power_ctrl(MTK_WCN_BOOL enable)
+ #endif /* CONSYS_PWR_ON_OFF_API_AVAILABLE */
+ 	} else {
+ #if CONSYS_PWR_ON_OFF_API_AVAILABLE
+-		clk_disable_unprepare(clk_scp_conn_main);
+-		WMT_PLAT_PR_DBG("clk_disable_unprepare(clk_scp_conn_main) calling\n");
++		/* ponytail: no AP2CONN bus-protect set before power-off (it was clear at boot);
++		 * add the infracfg 0x220[13,14]/0x250[18] sequence if power-off hangs. */
++		pm_runtime_put_sync(&g_pdev->dev);
++		WMT_PLAT_PR_INFO("CONN power domain off\n");
+ #else
+ 		CONSYS_REG_WRITE(conn_reg.topckgen_base + CONSYS_AHBAXI_PROT_EN_OFFSET,
+ 				 CONSYS_REG_READ(conn_reg.topckgen_base + CONSYS_AHBAXI_PROT_EN_OFFSET) &
+diff --git c/common/common_main/platform/mtk_wcn_consys_hw.c w/common/common_main/platform/mtk_wcn_consys_hw.c
+index c063998..7db9d57 100644
+--- c/common/common_main/platform/mtk_wcn_consys_hw.c
++++ w/common/common_main/platform/mtk_wcn_consys_hw.c
+@@ -72,7 +72,7 @@
+ ********************************************************************************
+ */
+ static INT32 mtk_wmt_probe(struct platform_device *pdev);
+-static INT32 mtk_wmt_remove(struct platform_device *pdev);
++static void mtk_wmt_remove(struct platform_device *pdev);
+ static INT32 mtk_wmt_suspend(struct device *dev);
+ static INT32 mtk_wmt_resume(struct device *dev);
+ 
+@@ -173,10 +173,13 @@ static void plat_resume_handler(struct work_struct *work);
+ struct regmap *g_regmap;
+ #endif
+ 
+-static int wmt_thermal_get_temp_cb(void *data, int *temp);
++static int __maybe_unused wmt_thermal_get_temp_cb(void *data, int *temp);
++#if 0 /* TODO(port): thermal_zone_of_device_ops -> thermal_zone_device_ops (optional feature) */
+ static const struct thermal_zone_of_device_ops tz_wmt_thermal_ops = {
+ 	.get_temp = wmt_thermal_get_temp_cb,
+ };
++#endif
++
+ 
+ /*******************************************************************************
+ *                           P R I V A T E   D A T A
+@@ -266,6 +269,10 @@ static VOID mtk_wcn_get_regmap(struct platform_device *pdev)
+ }
+ #endif
+ 
++static unsigned long emi_phys;
++module_param(emi_phys, ulong, 0444);
++MODULE_PARM_DESC(emi_phys, "override CONNSYS EMI base (port)");
++
+ static INT32 wmt_allocate_connsys_emi(struct platform_device *pdev)
+ {
+ #ifdef ALLOCATE_CONNSYS_EMI_FROM_KO
+@@ -288,11 +295,17 @@ static INT32 wmt_allocate_connsys_emi(struct platform_device *pdev)
+ 
+ 	gConEmiPhyBase = rmem->base;
+ 	gConEmiSize = rmem->size;
++	/* port: Android placed CONNSYS EMI at 0xbe000000 on this board; allow the
++	 * same fixed (DT no-map reserved) region until the DTS is changed. */
++	if (emi_phys) {
++		gConEmiPhyBase = emi_phys;
++		WMT_PLAT_PR_INFO("emi_phys override: 0x%llx\n", (unsigned long long)emi_phys);
++	}
+ #endif
+ 	return 0;
+ }
+ 
+-static int wmt_thermal_get_temp_cb(void *data, int *temp)
++static int __maybe_unused wmt_thermal_get_temp_cb(void *data, int *temp)
+ {
+ 	if (temp) {
+ 		*temp = wmt_lib_tm_temp_query() * 1000;
+@@ -303,19 +316,10 @@ static int wmt_thermal_get_temp_cb(void *data, int *temp)
+ 
+ static INT32 wmt_thermal_register(struct platform_device *pdev)
+ {
+-	struct thermal_zone_device *tz;
+-	int ret;
+-
+-	/* register thermal zone */
+-	tz = devm_thermal_zone_of_sensor_register(
+-		&pdev->dev, 0, NULL, &tz_wmt_thermal_ops);
+-
+-	if (IS_ERR(tz)) {
+-		ret = PTR_ERR(tz);
+-		WMT_PLAT_PR_INFO("Failed to register thermal zone device %d\n", ret);
+-		return -1;
+-	}
+-	WMT_PLAT_PR_INFO("Register thermal zone device.\n");
++	/* TODO(port): devm_thermal_zone_of_sensor_register() was replaced by
++	 * devm_thermal_of_zone_register() in 5.16.  The zone is only a throttle
++	 * input, so registration is skipped instead of porting tz_wmt_thermal_ops.
++	 */
+ 	return 0;
+ }
+ 
+@@ -358,7 +362,7 @@ static INT32 mtk_wmt_probe(struct platform_device *pdev)
+ 		iRet = -1;
+ 
+ 	if (iRet)
+-		return iRet;
++		{ WMT_PLAT_PR_ERR("read_reg_from_dts failed %d\n", iRet); return iRet; }
+ 
+ 	if (wmt_consys_ic_ops->consys_ic_clk_get_from_dts)
+ 		iRet = wmt_consys_ic_ops->consys_ic_clk_get_from_dts(pdev);
+@@ -366,7 +370,7 @@ static INT32 mtk_wmt_probe(struct platform_device *pdev)
+ 		iRet = -1;
+ 
+ 	if (iRet)
+-		return iRet;
++		{ WMT_PLAT_PR_ERR("clk_get_from_dts failed %d\n", iRet); return iRet; }
+ 
+ 	if (gConEmiPhyBase) {
+ 		pConnsysEmiStart = ioremap(gConEmiPhyBase, gConEmiSize);
+@@ -441,7 +445,7 @@ static INT32 mtk_wmt_probe(struct platform_device *pdev)
+ 	return 0;
+ }
+ 
+-static INT32 mtk_wmt_remove(struct platform_device *pdev)
++static void mtk_wmt_remove(struct platform_device *pdev)
+ {
+ 	if (wmt_consys_ic_ops->consys_ic_need_store_pdev) {
+ 		if (wmt_consys_ic_ops->consys_ic_need_store_pdev() == MTK_WCN_BOOL_TRUE)
+@@ -458,7 +462,6 @@ static INT32 mtk_wmt_remove(struct platform_device *pdev)
+ 	osal_sleepable_lock_deinit(&g_adie_chipid_lock);
+ 
+ 	atomic_set(&g_probe_called, 0);
+-	return 0;
+ }
+ 
+ static INT32 mtk_wmt_suspend(struct device *dev)
+@@ -982,14 +985,19 @@ INT32 mtk_wcn_consys_hw_restore(struct device *device)
+ 	return 0;
+ }
+ 
++static bool g_wmt_drv_registered;
++
+ INT32 mtk_wcn_consys_hw_init(VOID)
+ {
+ 	INT32 iRet = -1, retry = 0;
+ 
++	if (g_wmt_drv_registered)	/* port: idempotent for hand-driven ioctls */
++		return 0;
+ 	iRet = platform_driver_register(&mtk_wmt_dev_drv);
+ 	if (iRet)
+ 		WMT_PLAT_PR_ERR("WMT platform driver registered failed(%d)\n", iRet);
+ 	else {
++		g_wmt_drv_registered = true;
+ 		while (atomic_read(&g_probe_called) == 0 && retry < 100) {
+ 			osal_sleep_ms(50);
+ 			retry++;
+@@ -1019,7 +1027,10 @@ INT32 mtk_wcn_consys_hw_deinit(VOID)
+ 	mtk_wcn_dump_util_destroy();
+ #endif
+ 
+-	platform_driver_unregister(&mtk_wmt_dev_drv);
++	if (g_wmt_drv_registered) {
++		platform_driver_unregister(&mtk_wmt_dev_drv);
++		g_wmt_drv_registered = false;
++	}
+ 
+ 	if (wmt_consys_ic_ops)
+ 		wmt_consys_ic_ops = NULL;
+diff --git c/common/common_main/platform/mtk_wcn_consys_rmem.c w/common/common_main/platform/mtk_wcn_consys_rmem.c
+new file mode 100644
+index 0000000..cd03e01
+--- /dev/null
++++ w/common/common_main/platform/mtk_wcn_consys_rmem.c
+@@ -0,0 +1,30 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Reserved-memory allocator for the MediaTek CONNSYS EMI region.
++ *
++ * The vendor kernel carried this in its reserved-memory driver.  Without a
++ * driver bound to "mediatek,consys-reserve-memory" the dynamic node is not
++ * registered, so of_reserved_mem_lookup() in mtk_wcn_consys_hw.c fails and
++ * CONNSYS has no EMI base address for firmware download.
++ *
++ * The core performs the allocation described by size/alignment/alloc-ranges;
++ * this only needs to claim the compatible and log the result.
++ */
++#include <linux/init.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/device.h>
++
++static int consys_reserve_mem_device_init(struct reserved_mem *rmem,
++					  struct device *dev)
++{
++	dev_info(dev, "CONNSYS EMI region %pa size 0x%zx\n", &rmem->base,
++		 rmem->size);
++	return 0;
++}
++
++static const struct reserved_mem_ops consys_reserve_mem_ops = {
++	.device_init = consys_reserve_mem_device_init,
++};
++
++RESERVEDMEM_OF_DECLARE(consys_reserve_mem, "mediatek,consys-reserve-memory",
++		       &consys_reserve_mem_ops);
+diff --git c/common/connectivity_build_in_adapter.c w/common/connectivity_build_in_adapter.c
+index 3974bf2..e702d1c 100755
+--- c/common/connectivity_build_in_adapter.c
++++ w/common/connectivity_build_in_adapter.c
+@@ -363,7 +363,7 @@ void connectivity_export_dump_thread_state(const char *name)
+ 
+ 		if (strncmp(p->comm, name, strlen(name)) != 0)
+ 			continue;
+-		state = p->state;
++		state = p->__state;
+ 		cpu = task_cpu(p);
+ 		rq = cpu_rq(cpu);
+ 		curr = rq->curr;
+diff --git c/common/debug_utility/connsys_debug_utility.c w/common/debug_utility/connsys_debug_utility.c
+index d08bd1a..64fe078 100644
+--- c/common/debug_utility/connsys_debug_utility.c
++++ w/common/debug_utility/connsys_debug_utility.c
+@@ -128,7 +128,7 @@ static void connlog_emi_status_dump(void);
+ 
+ /* connlog when suspend */
+ static int connlog_alarm_init(void);
+-static enum alarmtimer_restart alarm_timer_handler(struct alarm *alarm, ktime_t);
++static void alarm_timer_handler(struct alarm *alarm, ktime_t);
+ static inline bool connlog_is_alarm_enable(void);
+ static int connlog_set_alarm_timer(void);
+ static int connlog_cancel_alarm_timer(void);
+@@ -551,7 +551,7 @@ static int connlog_set_alarm_timer(void)
+ 	ktime_t kt;
+ 
+ 	kt = ktime_set(gDev.log_alarm.alarm_sec, 0);
+-	alarm_start_relative(&gDev.log_alarm.alarm_timer, kt);
++	alarm_start_timer(&gDev.log_alarm.alarm_timer, kt, true);
+ 
+ 	pr_info("[connsys_log_alarm] alarm timer enabled timeout=[%d]", gDev.log_alarm.alarm_sec);
+ 	return 0;
+@@ -673,8 +673,7 @@ EXPORT_SYMBOL(connsys_log_blank_state_changed);
+ * RETURNS
+ *  void
+ *****************************************************************************/
+-static enum alarmtimer_restart alarm_timer_handler(struct alarm *alarm,
+-	ktime_t now)
++static void alarm_timer_handler(struct alarm *alarm, ktime_t now)
+ {
+ 	ktime_t kt;
+ 	struct rtc_time tm;
+@@ -690,10 +689,9 @@ static enum alarmtimer_restart alarm_timer_handler(struct alarm *alarm,
+ 
+ 	spin_lock_irqsave(&gDev.log_alarm.alarm_lock, gDev.log_alarm.flags);
+ 	kt = ktime_set(gDev.log_alarm.alarm_sec, 0);
+-	alarm_start_relative(&gDev.log_alarm.alarm_timer, kt);
++	alarm_start_timer(&gDev.log_alarm.alarm_timer, kt, true);
+ 	spin_unlock_irqrestore(&gDev.log_alarm.alarm_lock, gDev.log_alarm.flags);
+ 
+-	return ALARMTIMER_NORESTART;
+ }
+ 
+ /*****************************************************************************
+diff --git c/common/wmt_build_in_adapter.c w/common/wmt_build_in_adapter.c
+index 12658ee..64d14dc 100755
+--- c/common/wmt_build_in_adapter.c
++++ w/common/wmt_build_in_adapter.c
+@@ -119,7 +119,7 @@ static int conn_dbg_dev_init(void)
+ 		goto err1;
+ 	}
+ 
+-	pConnDbgClass = class_create(THIS_MODULE, CONN_DBG_DEVICE_NAME);
++	pConnDbgClass = class_create(CONN_DBG_DEVICE_NAME);
+ 	if (IS_ERR(pConnDbgClass)) {
+ 		pr_info("class create fail, error code(%ld)\n", PTR_ERR(pConnDbgClass));
+ 		goto err2;
+diff --git c/common/wmt_build_in_adapter.h w/common/wmt_build_in_adapter.h
+index 6ddd33f..6c4bcdf 100755
+--- c/common/wmt_build_in_adapter.h
++++ w/common/wmt_build_in_adapter.h
+@@ -6,6 +6,7 @@
+ #ifndef WMT_BUILD_IN_ADAPTER_H
+ #define WMT_BUILD_IN_ADAPTER_H
+ 
++#include <mtk_connectivity_compat.h>
+ #include <mtk_wcn_cmb_stub.h>
+ #include <linux/types.h>
+ #include <linux/fs.h>
+diff --git c/connfem/connfem_module.c w/connfem/connfem_module.c
+index 9d25d2e..c85b4b5 100644
+--- c/connfem/connfem_module.c
++++ w/connfem/connfem_module.c
+@@ -497,7 +497,7 @@ static int __init connfem_mod_init(void)
+ 	pr_info("ConnFem DevID major %d", connfem_major);
+ 
+ 	/* Char Device: Create class */
+-	connfem_cdev_ctx.class = class_create(THIS_MODULE, CONNFEM_DRIVER_NAME);
++	connfem_cdev_ctx.class = class_create(CONNFEM_DRIVER_NAME);
+ 	if (IS_ERR(connfem_cdev_ctx.class)) {
+ 		pr_info("[WARN] ConnFem create class failed");
+ 		ret = -30;
+diff --git c/fmradio/core/fm_module.c w/fmradio/core/fm_module.c
+index d63b1ff..8ba2531 100644
+--- c/fmradio/core/fm_module.c
++++ w/fmradio/core/fm_module.c
+@@ -1475,7 +1475,7 @@ static signed int fm_cdev_setup(struct fm *fm)
+ 		return ret;
+ 	}
+ #ifndef FM_DEV_STATIC_ALLOC
+-	plat->cls = class_create(THIS_MODULE, FM_NAME);
++	plat->cls = class_create(FM_NAME);
+ 
+ 	if (IS_ERR(plat->cls)) {
+ 		ret = PTR_ERR(plat->cls);
+diff --git c/fmradio/core/fm_utils.c w/fmradio/core/fm_utils.c
+index 2d8e109..65f40ed 100644
+--- c/fmradio/core/fm_utils.c
++++ w/fmradio/core/fm_utils.c
+@@ -407,7 +407,7 @@ static signed int fm_timer_init(struct fm_timer *thiz, void (*timeout) (unsigned
+ 
+ 	if (thiz->flag & FM_TIMER_FLAG_ACTIVATED) {
+ 		thiz->flag &= ~FM_TIMER_FLAG_ACTIVATED;
+-		del_timer(timerlist);
++		timer_delete(timerlist);
+ 	}
+ 
+ 	thiz->flag = flag;
+@@ -470,7 +470,7 @@ static signed int fm_timer_stop(struct fm_timer *thiz)
+ 		return -FM_ELOCK;
+ 	if (thiz->flag & FM_TIMER_FLAG_ACTIVATED) {
+ 		thiz->flag &= ~FM_TIMER_FLAG_ACTIVATED;
+-		del_timer(timerlist);
++		timer_delete(timerlist);
+ 	}
+ 
+ 	FM_UNLOCK(thiz->lock);
+@@ -542,7 +542,7 @@ signed int fm_timer_put(struct fm_timer *thiz)
+ 		return -FM_EPARA;
+ 	}
+ 
+-	del_timer(thiz->priv);
++	timer_delete(thiz->priv);
+ 	thiz->ref--;
+ 	if (thiz->ref == 0) {
+ 		fm_spin_lock_put(thiz->lock);
+diff --git c/gps/Makefile w/gps/Makefile
+index c5ebff0..a1024cf 100644
+--- c/gps/Makefile
++++ w/gps/Makefile
+@@ -59,7 +59,7 @@ ccflags-y += -I$(srctree)/drivers/devfreq
+ ###############################################################################
+ 
+ MODULE_NAME := gps_drv
+-obj-y += $(MODULE_NAME).o
++obj-$(CONFIG_MTK_COMBO_GPS) += $(MODULE_NAME).o
+ 
+ GPS_DRV_CONTROL_LNA := n
+ GPS_DL_SUPPORT := n
+diff --git c/gps/data_link/linux/gps_dl_emi.c w/gps/data_link/linux/gps_dl_emi.c
+index 9f99741..004642b 100644
+--- c/gps/data_link/linux/gps_dl_emi.c
++++ w/gps/data_link/linux/gps_dl_emi.c
+@@ -201,7 +201,7 @@ void gps_icap_probe(void)
+ 		goto err_out;
+ 	}
+ 
+-	gps_icap_dev_ptr->cls = class_create(THIS_MODULE, "gpsemi");
++	gps_icap_dev_ptr->cls = class_create("gpsemi");
+ 	if (IS_ERR(gps_icap_dev_ptr->cls)) {
+ 		GDL_LOGE("unable to create class, err = %d\n", (int)PTR_ERR(gps_icap_dev_ptr->cls));
+ 		goto err_out;
+diff --git c/gps/data_link/linux/gps_each_device.c w/gps/data_link/linux/gps_each_device.c
+index 85eac26..6b26f42 100644
+--- c/gps/data_link/linux/gps_each_device.c
++++ w/gps/data_link/linux/gps_each_device.c
+@@ -479,7 +479,7 @@ int gps_dl_cdev_setup(struct gps_each_device *dev, int index)
+ 		return result;
+ 	}
+ 
+-	dev->cls = class_create(THIS_MODULE, dev->cfg.dev_name);
++	dev->cls = class_create(dev->cfg.dev_name);
+ 	if (IS_ERR(dev->cls)) {
+ 		GDL_LOGE("class_create fail on %s", dev->cfg.dev_name);
+ 		return -1;
+diff --git c/gps/gps_pwr/gps_pwr.c w/gps/gps_pwr/gps_pwr.c
+index d30cdd5..86bdf0f 100644
+--- c/gps/gps_pwr/gps_pwr.c
++++ w/gps/gps_pwr/gps_pwr.c
+@@ -192,7 +192,7 @@ static int gps_pwr_init(void)
+ 		pr_info("cdev_add fail: %d\n", err);
+ 		goto err_out;
+ 	}
+-	gps_pwr_devobj->cls = class_create(THIS_MODULE, "gps_pwr");
++	gps_pwr_devobj->cls = class_create("gps_pwr");
+ 	if (IS_ERR(gps_pwr_devobj->cls)) {
+ 		pr_info("Unable to create class, err = %d\n", (int)PTR_ERR(gps_pwr_devobj->cls));
+ 	goto err_out;
+diff --git c/gps/gps_scp/gps2scp.c w/gps/gps_scp/gps2scp.c
+index 549ae39..ac4387b 100644
+--- c/gps/gps_scp/gps2scp.c
++++ w/gps/gps_scp/gps2scp.c
+@@ -560,7 +560,7 @@ static int gps2scp_test_init(void)
+ 		pr_info("cdev_add fail: %d\n", err);
+ 		goto err_out;
+ 	}
+-	gps2scp_devobj_test->cls = class_create(THIS_MODULE, "gps2scp_test");
++	gps2scp_devobj_test->cls = class_create("gps2scp_test");
+ 	if (IS_ERR(gps2scp_devobj_test->cls)) {
+ 		pr_info("Unable to create class, err = %d\n", (int)PTR_ERR(gps2scp_devobj_test->cls));
+ 	goto err_out;
+@@ -620,7 +620,7 @@ static int gps2scp_init(void)
+ 		pr_info("cdev_add fail: %d\n", err);
+ 		goto err_out;
+ 	}
+-	gps2scp_devobj->cls = class_create(THIS_MODULE, "gps2scp");
++	gps2scp_devobj->cls = class_create("gps2scp");
+ 	if (IS_ERR(gps2scp_devobj->cls)) {
+ 		pr_info("Unable to create class, err = %d\n", (int)PTR_ERR(gps2scp_devobj->cls));
+ 	goto err_out;
+diff --git c/gps/gps_stp/gps_emi.c w/gps/gps_stp/gps_emi.c
+index a764cb8..617a3b5 100644
+--- c/gps/gps_stp/gps_emi.c
++++ w/gps/gps_stp/gps_emi.c
+@@ -469,7 +469,7 @@ static int gps_emi_mod_init(void)
+ 		GPS_ERR("cdev_add fail: %d\n", err);
+ 		goto err_out;
+ 	}
+-	devobj->cls = class_create(THIS_MODULE, "gpsemi");
++	devobj->cls = class_create("gpsemi");
+ 	if (IS_ERR(devobj->cls)) {
+ 		GPS_ERR("Unable to create class, err = %d\n", (int)PTR_ERR(devobj->cls));
+ 	goto err_out;
+diff --git c/gps/gps_stp/stp_chrdev_gps.c w/gps/gps_stp/stp_chrdev_gps.c
+index f9a8902..58d2c66 100644
+--- c/gps/gps_stp/stp_chrdev_gps.c
++++ w/gps/gps_stp/stp_chrdev_gps.c
+@@ -1284,7 +1284,7 @@ static int GPS_init(void)
+ 		goto error;
+ #if WMT_CREATE_NODE_DYNAMIC || REMOVE_MK_NODE
+ 
+-	stpgps_class = class_create(THIS_MODULE, "stpgps");
++	stpgps_class = class_create("stpgps");
+ 	if (IS_ERR(stpgps_class))
+ 		goto error;
+ 	stpgps_dev = device_create(stpgps_class, NULL, dev, NULL, "stpgps");
+@@ -1307,7 +1307,7 @@ static int GPS_init(void)
+ 		goto error;
+ #if WMT_CREATE_NODE_DYNAMIC || REMOVE_MK_NODE
+ 
+-	stpgps2_class = class_create(THIS_MODULE, "stpgps2");
++	stpgps2_class = class_create("stpgps2");
+ 	if (IS_ERR(stpgps2_class))
+ 		goto error;
+ 	stpgps2_dev = device_create(stpgps2_class, NULL, dev2, NULL, "stpgps2");
+@@ -1331,7 +1331,7 @@ static int GPS_init(void)
+ 		goto error;
+ #if WMT_CREATE_NODE_DYNAMIC || REMOVE_MK_NODE
+ 
+-	stpgps2_class = class_create(THIS_MODULE, "stpgps2");
++	stpgps2_class = class_create("stpgps2");
+ 	if (IS_ERR(stpgps2_class))
+ 		goto error;
+ 	stpgps2_dev = device_create(stpgps2_class, NULL, dev2, NULL, "stpgps2");
+diff --git c/power_throttling/adapter.c w/power_throttling/adapter.c
+index 6b18a75..3354e66 100644
+--- c/power_throttling/adapter.c
++++ w/power_throttling/adapter.c
+@@ -478,7 +478,7 @@ static int conn_pwr_dev_init(void)
+ 		goto err1;
+ 	}
+ 
+-	pConnPwrClass = class_create(THIS_MODULE, CONN_PWR_DEVICE_NAME);
++	pConnPwrClass = class_create(CONN_PWR_DEVICE_NAME);
+ 	if (IS_ERR(pConnPwrClass)) {
+ 		pr_info("class create fail, error code(%ld)\n",
+ 						PTR_ERR(pConnPwrClass));
+diff --git c/wlan/adaptor/Makefile w/wlan/adaptor/Makefile
+index 9d6d13a..0d0c1fb 100644
+--- c/wlan/adaptor/Makefile
++++ w/wlan/adaptor/Makefile
+@@ -46,7 +46,7 @@ ccflags-y += -D MTK_WCN_WMT_STP_EXP_SYMBOL_ABSTRACT
+ ccflags-y += -D CREATE_NODE_DYNAMIC=1
+ 
+ MODULE_NAME := wmt_wifi_chrdev
+-obj-y += $(MODULE_NAME).o
++obj-$(CONFIG_MTK_COMBO_WIFI) += $(MODULE_NAME).o
+ 
+ # Wi-Fi character device driver
+ $(MODULE_NAME)-objs += wmt_cdev_wifi.o
+diff --git c/wlan/adaptor/wmt_cdev_wifi.c w/wlan/adaptor/wmt_cdev_wifi.c
+index 2240ec5..40bbdfa 100644
+--- c/wlan/adaptor/wmt_cdev_wifi.c
++++ w/wlan/adaptor/wmt_cdev_wifi.c
+@@ -813,7 +813,7 @@ static int WIFI_init(void)
+ 		goto error;
+ 
+ #if CREATE_NODE_DYNAMIC	/* mknod replace */
+-	wmtwifi_class = class_create(THIS_MODULE, "wmtWifi");
++	wmtwifi_class = class_create("wmtWifi");
+ 	if (IS_ERR(wmtwifi_class))
+ 		goto error;
+ 	wmtwifi_dev = device_create(wmtwifi_class, NULL, wifi_devno, NULL,
+@@ -881,3 +881,8 @@ void mtk_wcn_wmt_wifi_exit(void)
+ 	return WIFI_exit();
+ }
+ EXPORT_SYMBOL(mtk_wcn_wmt_wifi_exit);
++#ifdef MODULE
++/* port: as modules, wmt_drv's weak stub cannot reach us; init here. */
++module_init(WIFI_init);
++module_exit(WIFI_exit);
++#endif
+diff --git c/wlan/core/gen4m/Makefile w/wlan/core/gen4m/Makefile
+index be6a83b..91742fa 100644
+--- c/wlan/core/gen4m/Makefile
++++ w/wlan/core/gen4m/Makefile
+@@ -594,7 +594,7 @@ ifneq ($(PLATFORM_FLAGS), )
+     ccflags-y += $(PLATFORM_FLAGS)
+ endif
+ 
+-obj-y += $(MODULE_NAME).o
++obj-$(CONFIG_MTK_COMBO_WIFI) += $(MODULE_NAME).o
+ 
+ ifneq ($(filter yes,$(MTK_TC10_IN_HOUSE)),)
+ ccflags-y += -DMTK_TC10_IN_HOUSE
+diff --git c/wlan/core/gen4m/common/debug.c w/wlan/core/gen4m/common/debug.c
+index 9362a0f..08750af 100644
+--- c/wlan/core/gen4m/common/debug.c
++++ w/wlan/core/gen4m/common/debug.c
+@@ -1,4 +1,5 @@
+ #include "precomp.h"
++#include <linux/sched/clock.h>
+ 
+ 
+ #if (CFG_SUPPORT_STATISTICS == 1)
+diff --git c/wlan/core/gen4m/common/wlan_lib.c w/wlan/core/gen4m/common/wlan_lib.c
+index fd6afd2..338d0c0 100644
+--- c/wlan/core/gen4m/common/wlan_lib.c
++++ w/wlan/core/gen4m/common/wlan_lib.c
+@@ -68,6 +68,7 @@
+  *******************************************************************************
+  */
+ #include "precomp.h"
++#include <linux/sched/clock.h>
+ #include "mgmt/ais_fsm.h"
+ #include "mddp.h"
+ 
+@@ -13693,7 +13694,7 @@ void wlanTpeUninit(struct GLUE_INFO *prGlueInfo)
+ 	if (!prAdapter->rWifiVar.ucTpEnhanceEnable)
+ 		return;
+ 
+-	del_timer_sync(&(prGlueInfo->rTpeTimer));
++	timer_delete_sync(&(prGlueInfo->rTpeTimer));
+ }
+ 
+ int wlanTpeProcess(struct GLUE_INFO *prGlueInfo,
+@@ -13778,7 +13779,7 @@ int wlanTpeProcess(struct GLUE_INFO *prGlueInfo,
+ 			prGlueInfo->u4TpeTimeout) {
+ 			/* Timeout already, flush out directly. */
+ 			if (timer_pending(&prGlueInfo->rTpeTimer))
+-				del_timer(&prGlueInfo->rTpeTimer);
++				timer_delete(&prGlueInfo->rTpeTimer);
+ 			wlanTpeFlush(prGlueInfo);
+ 			kalSetEvent(prGlueInfo);
+ 		} else {
+diff --git c/wlan/core/gen4m/include/nic/wlan_def.h w/wlan/core/gen4m/include/nic/wlan_def.h
+index 571ae43..ebd6989 100644
+--- c/wlan/core/gen4m/include/nic/wlan_def.h
++++ w/wlan/core/gen4m/include/nic/wlan_def.h
+@@ -662,6 +662,15 @@ enum ENUM_MODULATION_TYPE {
+ 	MODULATION_TYPE_NUM
+ };
+ 
++/* The ACPI_STATE_D* names are also macros from <acpi/actypes.h>; the Wi-Fi
++ * module never uses ACPI, so drop the kernel names before declaring ours.
++ */
++#ifdef ACPI_STATE_D0
++#undef ACPI_STATE_D0
++#undef ACPI_STATE_D1
++#undef ACPI_STATE_D2
++#undef ACPI_STATE_D3
++#endif
+ enum ENUM_ACPI_STATE {
+ 	ACPI_STATE_D0 = 0,
+ 	ACPI_STATE_D1,
+diff --git c/wlan/core/gen4m/mgmt/ais_fsm.c w/wlan/core/gen4m/mgmt/ais_fsm.c
+index d5b682a..c220a52 100644
+--- c/wlan/core/gen4m/mgmt/ais_fsm.c
++++ w/wlan/core/gen4m/mgmt/ais_fsm.c
+@@ -68,6 +68,7 @@
+  *                    E X T E R N A L   R E F E R E N C E S
+  *******************************************************************************
+  */
++#include <linux/sched/clock.h>
+ #include "precomp.h"
+ #include "mddp.h"
+ /*******************************************************************************
+diff --git c/wlan/core/gen4m/mgmt/rlm_domain.c w/wlan/core/gen4m/mgmt/rlm_domain.c
+index d8a4eb5..0c2d43b 100644
+--- c/wlan/core/gen4m/mgmt/rlm_domain.c
++++ w/wlan/core/gen4m/mgmt/rlm_domain.c
+@@ -5201,8 +5201,7 @@ void txPwrCtrlCfgFileToList(struct ADAPTER *prAdapter)
+ 					      VIR_MEM_TYPE);
+ 	kalMemZero(pucConfigBuf, WLAN_CFG_FILE_BUF_SIZE);
+ 	if (pucConfigBuf) {
+-		if( strstr(saved_command_line,"androidboot.board_id=S96801BA1") ||
+-			strstr(saved_command_line,"androidboot.board_id=S96801TA1") ){
++		if (0) { /* port: Samsung board_id check; saved_command_line is not exported to modules */
+ 			if (kalRequestFirmware("grippower_la.info", pucConfigBuf,
+ 				WLAN_CFG_FILE_BUF_SIZE, &u4ConfigReadLen,
+ 				prAdapter->prGlueInfo->prDev) == 0) {
+@@ -5622,7 +5621,7 @@ void rlmDomainSendPwrLimitCmd(struct ADAPTER *prAdapter)
+ 			prCmd6E_3);
+ #endif
+ 
+-	if (prAdapter->rWifiVar.u2CountryCode != (uint16_t)NULL) {
++	if (prAdapter->rWifiVar.u2CountryCode != 0) {
+ 		DBGLOG(RLM, TRACE,
+ 		       "Domain: ValidCC=%c%c, PwrLimitCC=%c%c, PwrLimitChNum=%d\n",
+ 		       (prAdapter->rWifiVar.u2CountryCode & 0xff00) >> 8,
+diff --git c/wlan/core/gen4m/mgmt/stats.c w/wlan/core/gen4m/mgmt/stats.c
+index 301dc78..67da35e 100644
+--- c/wlan/core/gen4m/mgmt/stats.c
++++ w/wlan/core/gen4m/mgmt/stats.c
+@@ -25,6 +25,7 @@
+  *            E X T E R N A L	R E F E R E N C E S
+  *******************************************************************************
+  */
++#include <linux/sched/clock.h>
+ #include "precomp.h"
+ 
+ #if (CFG_SUPPORT_STATISTICS == 1)
+diff --git c/wlan/core/gen4m/os/linux/gl_cfg80211.c w/wlan/core/gen4m/os/linux/gl_cfg80211.c
+index 1892bcb..91dde4a 100644
+--- c/wlan/core/gen4m/os/linux/gl_cfg80211.c
++++ w/wlan/core/gen4m/os/linux/gl_cfg80211.c
+@@ -4093,19 +4093,19 @@ mtk_cfg80211_change_station(struct wiphy *wiphy,
+ 			FALSE, FALSE, &u4BufLen);
+ 	}
+ 
+-	if (params->supported_rates == NULL)
++	if (params->link_sta_params.supported_rates == NULL)
+ 		return 0;
+ 
+ 	/* init */
+ 	kalMemZero(&rCmdUpdate, sizeof(rCmdUpdate));
+ 	kalMemCopy(rCmdUpdate.aucPeerMac, mac, 6);
+ 
+-	if (params->supported_rates != NULL) {
++	if (params->link_sta_params.supported_rates != NULL) {
+ 
+-		u4Temp = params->supported_rates_len;
++		u4Temp = params->link_sta_params.supported_rates_len;
+ 		if (u4Temp > CMD_PEER_UPDATE_SUP_RATE_MAX)
+ 			u4Temp = CMD_PEER_UPDATE_SUP_RATE_MAX;
+-		kalMemCopy(rCmdUpdate.aucSupRate, params->supported_rates,
++		kalMemCopy(rCmdUpdate.aucSupRate, params->link_sta_params.supported_rates,
+ 			   u4Temp);
+ 		rCmdUpdate.u2SupRateLen = u4Temp;
+ 	}
+@@ -4128,30 +4128,30 @@ mtk_cfg80211_change_station(struct wiphy *wiphy,
+ 		rCmdUpdate.u2ExtCapLen = u4Temp;
+ 	}
+ 
+-	if (params->ht_capa != NULL) {
++	if (params->link_sta_params.ht_capa != NULL) {
+ 
+-		rCmdUpdate.rHtCap.u2CapInfo = params->ht_capa->cap_info;
++		rCmdUpdate.rHtCap.u2CapInfo = params->link_sta_params.ht_capa->cap_info;
+ 		rCmdUpdate.rHtCap.ucAmpduParamsInfo =
+-			params->ht_capa->ampdu_params_info;
++			params->link_sta_params.ht_capa->ampdu_params_info;
+ 		rCmdUpdate.rHtCap.u2ExtHtCapInfo =
+-			params->ht_capa->extended_ht_cap_info;
++			params->link_sta_params.ht_capa->extended_ht_cap_info;
+ 		rCmdUpdate.rHtCap.u4TxBfCapInfo =
+-			params->ht_capa->tx_BF_cap_info;
++			params->link_sta_params.ht_capa->tx_BF_cap_info;
+ 		rCmdUpdate.rHtCap.ucAntennaSelInfo =
+-			params->ht_capa->antenna_selection_info;
++			params->link_sta_params.ht_capa->antenna_selection_info;
+ 		kalMemCopy(rCmdUpdate.rHtCap.rMCS.arRxMask,
+-			   params->ht_capa->mcs.rx_mask,
++			   params->link_sta_params.ht_capa->mcs.rx_mask,
+ 			   sizeof(rCmdUpdate.rHtCap.rMCS.arRxMask));
+ 
+ 		rCmdUpdate.rHtCap.rMCS.u2RxHighest =
+-			params->ht_capa->mcs.rx_highest;
++			params->link_sta_params.ht_capa->mcs.rx_highest;
+ 		rCmdUpdate.rHtCap.rMCS.ucTxParams =
+-			params->ht_capa->mcs.tx_params;
++			params->link_sta_params.ht_capa->mcs.tx_params;
+ 		rCmdUpdate.fgIsSupHt = TRUE;
+ 	}
+ 	/* vht */
+ 
+-	if (params->vht_capa != NULL) {
++	if (params->link_sta_params.vht_capa != NULL) {
+ 		/* rCmdUpdate.rVHtCap */
+ 		/* rCmdUpdate.rVHtCap */
+ 	}
+@@ -4224,19 +4224,19 @@ mtk_cfg80211_change_station(struct wiphy *wiphy,
+ 			FALSE, FALSE, &u4BufLen);
+ 	}
+ 
+-	if (params->supported_rates == NULL)
++	if (params->link_sta_params.supported_rates == NULL)
+ 		return 0;
+ 
+ 	/* init */
+ 	kalMemZero(&rCmdUpdate, sizeof(rCmdUpdate));
+ 	kalMemCopy(rCmdUpdate.aucPeerMac, mac, 6);
+ 
+-	if (params->supported_rates != NULL) {
++	if (params->link_sta_params.supported_rates != NULL) {
+ 
+-		u4Temp = params->supported_rates_len;
++		u4Temp = params->link_sta_params.supported_rates_len;
+ 		if (u4Temp > CMD_PEER_UPDATE_SUP_RATE_MAX)
+ 			u4Temp = CMD_PEER_UPDATE_SUP_RATE_MAX;
+-		kalMemCopy(rCmdUpdate.aucSupRate, params->supported_rates,
++		kalMemCopy(rCmdUpdate.aucSupRate, params->link_sta_params.supported_rates,
+ 			   u4Temp);
+ 		rCmdUpdate.u2SupRateLen = u4Temp;
+ 	}
+@@ -4259,30 +4259,30 @@ mtk_cfg80211_change_station(struct wiphy *wiphy,
+ 		rCmdUpdate.u2ExtCapLen = u4Temp;
+ 	}
+ 
+-	if (params->ht_capa != NULL) {
++	if (params->link_sta_params.ht_capa != NULL) {
+ 
+-		rCmdUpdate.rHtCap.u2CapInfo = params->ht_capa->cap_info;
++		rCmdUpdate.rHtCap.u2CapInfo = params->link_sta_params.ht_capa->cap_info;
+ 		rCmdUpdate.rHtCap.ucAmpduParamsInfo =
+-			params->ht_capa->ampdu_params_info;
++			params->link_sta_params.ht_capa->ampdu_params_info;
+ 		rCmdUpdate.rHtCap.u2ExtHtCapInfo =
+-			params->ht_capa->extended_ht_cap_info;
++			params->link_sta_params.ht_capa->extended_ht_cap_info;
+ 		rCmdUpdate.rHtCap.u4TxBfCapInfo =
+-			params->ht_capa->tx_BF_cap_info;
++			params->link_sta_params.ht_capa->tx_BF_cap_info;
+ 		rCmdUpdate.rHtCap.ucAntennaSelInfo =
+-			params->ht_capa->antenna_selection_info;
++			params->link_sta_params.ht_capa->antenna_selection_info;
+ 		kalMemCopy(rCmdUpdate.rHtCap.rMCS.arRxMask,
+-			   params->ht_capa->mcs.rx_mask,
++			   params->link_sta_params.ht_capa->mcs.rx_mask,
+ 			   sizeof(rCmdUpdate.rHtCap.rMCS.arRxMask));
+ 
+ 		rCmdUpdate.rHtCap.rMCS.u2RxHighest =
+-			params->ht_capa->mcs.rx_highest;
++			params->link_sta_params.ht_capa->mcs.rx_highest;
+ 		rCmdUpdate.rHtCap.rMCS.ucTxParams =
+-			params->ht_capa->mcs.tx_params;
++			params->link_sta_params.ht_capa->mcs.tx_params;
+ 		rCmdUpdate.fgIsSupHt = TRUE;
+ 	}
+ 	/* vht */
+ 
+-	if (params->vht_capa != NULL) {
++	if (params->link_sta_params.vht_capa != NULL) {
+ 		/* rCmdUpdate.rVHtCap */
+ 		/* rCmdUpdate.rVHtCap */
+ 	}
+@@ -7846,7 +7846,7 @@ int mtk_uninit_ap_role(struct GLUE_INFO *prGlueInfo,
+ int mtk_cfg_start_radar_detection(struct wiphy *wiphy,
+ 				  struct net_device *dev,
+ 				  struct cfg80211_chan_def *chandef,
+-				  unsigned int cac_time_ms)
++				  unsigned int cac_time_ms, int link_id)
+ {
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+@@ -8106,11 +8106,9 @@ int mtk_cfg_change_iface(struct wiphy *wiphy,
+ 	return 0;
+ }
+ 
+-int mtk_cfg_add_key(struct wiphy *wiphy,
+-		    struct net_device *ndev, u8 key_index,
+-		    bool pairwise, const u8 *mac_addr,
+-		    struct key_params *params)
++int mtk_cfg_add_key(struct wiphy *wiphy, struct wireless_dev *wdev, int link_id, u8 key_index, bool pairwise, const u8 *mac_addr, struct key_params *params)
+ {
++	struct net_device *ndev = wdev ? wdev->netdev : NULL;
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+ 	WIPHY_PRIV(wiphy, prGlueInfo);
+@@ -8130,11 +8128,9 @@ int mtk_cfg_add_key(struct wiphy *wiphy,
+ 				    mac_addr, params);
+ }
+ 
+-int mtk_cfg_get_key(struct wiphy *wiphy,
+-		    struct net_device *ndev, u8 key_index,
+-		    bool pairwise, const u8 *mac_addr, void *cookie,
+-		    void (*callback)(void *cookie, struct key_params *))
++int mtk_cfg_get_key(struct wiphy *wiphy, struct wireless_dev *wdev, int link_id, u8 key_index, bool pairwise, const u8 *mac_addr, void *cookie, void (*callback)(void *cookie, struct key_params *))
+ {
++	struct net_device *ndev = wdev ? wdev->netdev : NULL;
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+ 	WIPHY_PRIV(wiphy, prGlueInfo);
+@@ -8153,10 +8149,9 @@ int mtk_cfg_get_key(struct wiphy *wiphy,
+ 				    pairwise, mac_addr, cookie, callback);
+ }
+ 
+-int mtk_cfg_del_key(struct wiphy *wiphy,
+-		    struct net_device *ndev, u8 key_index,
+-		    bool pairwise, const u8 *mac_addr)
++int mtk_cfg_del_key(struct wiphy *wiphy, struct wireless_dev *wdev, int link_id, u8 key_index, bool pairwise, const u8 *mac_addr)
+ {
++	struct net_device *ndev = wdev ? wdev->netdev : NULL;
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+ 	WIPHY_PRIV(wiphy, prGlueInfo);
+@@ -8175,9 +8170,7 @@ int mtk_cfg_del_key(struct wiphy *wiphy,
+ 				    pairwise, mac_addr);
+ }
+ 
+-int mtk_cfg_set_default_key(struct wiphy *wiphy,
+-			    struct net_device *ndev,
+-			    u8 key_index, bool unicast, bool multicast)
++int mtk_cfg_set_default_key(struct wiphy *wiphy, struct net_device *ndev, int link_id, u8 key_index, bool unicast, bool multicast)
+ {
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+@@ -8197,9 +8190,9 @@ int mtk_cfg_set_default_key(struct wiphy *wiphy,
+ 					    key_index, unicast, multicast);
+ }
+ 
+-int mtk_cfg_set_default_mgmt_key(struct wiphy *wiphy,
+-		struct net_device *ndev, u8 key_index)
++int mtk_cfg_set_default_mgmt_key(struct wiphy *wiphy, struct wireless_dev *wdev, int link_id, u8 key_index)
+ {
++	struct net_device *ndev = wdev ? wdev->netdev : NULL;
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+ 	WIPHY_PRIV(wiphy, prGlueInfo);
+@@ -8217,15 +8210,14 @@ int mtk_cfg_set_default_mgmt_key(struct wiphy *wiphy,
+ }
+ 
+ #if KERNEL_VERSION(3, 16, 0) <= CFG80211_VERSION_CODE
+-int mtk_cfg_get_station(struct wiphy *wiphy,
+-			struct net_device *ndev,
+-			const u8 *mac, struct station_info *sinfo)
++int mtk_cfg_get_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac, struct station_info *sinfo)
+ #else
+ int mtk_cfg_get_station(struct wiphy *wiphy,
+ 			struct net_device *ndev,
+ 			u8 *mac, struct station_info *sinfo)
+ #endif
+ {
++	struct net_device *ndev = wdev ? wdev->netdev : NULL;
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+ 	WIPHY_PRIV(wiphy, prGlueInfo);
+@@ -8244,15 +8236,14 @@ int mtk_cfg_get_station(struct wiphy *wiphy,
+ 
+ #if CFG_SUPPORT_TDLS
+ #if KERNEL_VERSION(3, 16, 0) <= CFG80211_VERSION_CODE
+-int mtk_cfg_change_station(struct wiphy *wiphy,
+-			   struct net_device *ndev,
+-			   const u8 *mac, struct station_parameters *params)
++int mtk_cfg_change_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac, struct station_parameters *params)
+ #else
+ int mtk_cfg_change_station(struct wiphy *wiphy,
+ 			   struct net_device *ndev,
+ 			   u8 *mac, struct station_parameters *params)
+ #endif
+ {
++	struct net_device *ndev = wdev ? wdev->netdev : NULL;
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+ 	WIPHY_PRIV(wiphy, prGlueInfo);
+@@ -8272,15 +8263,14 @@ int mtk_cfg_change_station(struct wiphy *wiphy,
+ }
+ 
+ #if KERNEL_VERSION(3, 16, 0) <= CFG80211_VERSION_CODE
+-int mtk_cfg_add_station(struct wiphy *wiphy,
+-			struct net_device *ndev,
+-			const u8 *mac, struct station_parameters *params)
++int mtk_cfg_add_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac, struct station_parameters *params)
+ #else
+ int mtk_cfg_add_station(struct wiphy *wiphy,
+ 			struct net_device *ndev,
+ 			u8 *mac, struct station_parameters *params)
+ #endif
+ {
++	struct net_device *ndev = wdev ? wdev->netdev : NULL;
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+ 	WIPHY_PRIV(wiphy, prGlueInfo);
+@@ -8327,7 +8317,7 @@ int mtk_cfg_tdls_oper(struct wiphy *wiphy,
+ #if KERNEL_VERSION(3, 18, 0) <= CFG80211_VERSION_CODE
+ int mtk_cfg_tdls_mgmt(struct wiphy *wiphy,
+ 		      struct net_device *dev,
+-		      const u8 *peer, u8 action_code, u8 dialog_token,
++		      const u8 *peer, int link_id, u8 action_code, u8 dialog_token,
+ 		      u16 status_code, u32 peer_capability,
+ 		      bool initiator, const u8 *buf, size_t len)
+ #elif KERNEL_VERSION(3, 16, 0) <= CFG80211_VERSION_CODE
+@@ -8375,9 +8365,7 @@ int mtk_cfg_tdls_mgmt(struct wiphy *wiphy,
+ #endif /* CFG_SUPPORT_TDLS */
+ 
+ #if KERNEL_VERSION(3, 19, 0) <= CFG80211_VERSION_CODE
+-int mtk_cfg_del_station(struct wiphy *wiphy,
+-			struct net_device *ndev,
+-			struct station_del_parameters *params)
++int mtk_cfg_del_station(struct wiphy *wiphy, struct wireless_dev *wdev, struct station_del_parameters *params)
+ #elif KERNEL_VERSION(3, 16, 0) <= CFG80211_VERSION_CODE
+ int mtk_cfg_del_station(struct wiphy *wiphy,
+ 			struct net_device *ndev,
+@@ -8387,6 +8375,7 @@ int mtk_cfg_del_station(struct wiphy *wiphy,
+ 			struct net_device *ndev, u8 *mac)
+ #endif
+ {
++	struct net_device *ndev = wdev ? wdev->netdev : NULL;
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+ 	WIPHY_PRIV(wiphy, prGlueInfo);
+@@ -8436,9 +8425,9 @@ int mtk_cfg_scan(struct wiphy *wiphy,
+ }
+ 
+ #if KERNEL_VERSION(4, 5, 0) <= CFG80211_VERSION_CODE
+-void mtk_cfg_abort_scan(struct wiphy *wiphy,
+-			struct wireless_dev *wdev)
++void mtk_cfg_abort_scan(struct wiphy *wiphy, struct wireless_dev *wdev)
+ {
++	struct net_device *ndev = wdev ? wdev->netdev : NULL;
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+ 	WIPHY_PRIV(wiphy, prGlueInfo);
+@@ -9102,9 +9091,7 @@ int mtk_cfg_start_ap(struct wiphy *wiphy,
+ 	return mtk_p2p_cfg80211_start_ap(wiphy, dev, settings);
+ }
+ 
+-int mtk_cfg_change_beacon(struct wiphy *wiphy,
+-			  struct net_device *dev,
+-			  struct cfg80211_beacon_data *info)
++int mtk_cfg_change_beacon(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_ap_update *info)
+ {
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+@@ -9120,11 +9107,10 @@ int mtk_cfg_change_beacon(struct wiphy *wiphy,
+ 		return -EFAULT;
+ 	}
+ 
+-	return mtk_p2p_cfg80211_change_beacon(wiphy, dev, info);
++	return mtk_p2p_cfg80211_change_beacon(wiphy, dev, &info->beacon);
+ }
+ 
+-int mtk_cfg_stop_ap(struct wiphy *wiphy,
+-		    struct net_device *dev)
++int mtk_cfg_stop_ap(struct wiphy *wiphy, struct net_device *dev, unsigned int link_id)
+ {
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+@@ -9143,8 +9129,7 @@ int mtk_cfg_stop_ap(struct wiphy *wiphy,
+ 	return mtk_p2p_cfg80211_stop_ap(wiphy, dev);
+ }
+ 
+-int mtk_cfg_set_wiphy_params(struct wiphy *wiphy,
+-			     u32 changed)
++int mtk_cfg_set_wiphy_params(struct wiphy *wiphy, int radio_idx, u32 changed)
+ {
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+@@ -9159,10 +9144,7 @@ int mtk_cfg_set_wiphy_params(struct wiphy *wiphy,
+ 	return mtk_p2p_cfg80211_set_wiphy_params(wiphy, changed);
+ }
+ 
+-int mtk_cfg_set_bitrate_mask(struct wiphy *wiphy,
+-			     struct net_device *dev,
+-			     const u8 *peer,
+-			     const struct cfg80211_bitrate_mask *mask)
++int mtk_cfg_set_bitrate_mask(struct wiphy *wiphy, struct net_device *dev, unsigned int link_id, const u8 *peer, const struct cfg80211_bitrate_mask *mask)
+ {
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+@@ -9182,9 +9164,7 @@ int mtk_cfg_set_bitrate_mask(struct wiphy *wiphy,
+ 			mask);
+ }
+ 
+-int mtk_cfg_set_txpower(struct wiphy *wiphy,
+-			struct wireless_dev *wdev,
+-			enum nl80211_tx_power_setting type, int mbm)
++int mtk_cfg_set_txpower(struct wiphy *wiphy, struct wireless_dev *wdev, int radio_idx, enum nl80211_tx_power_setting type, int mbm)
+ {
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+@@ -9203,9 +9183,7 @@ int mtk_cfg_set_txpower(struct wiphy *wiphy,
+ 	return mtk_p2p_cfg80211_set_txpower(wiphy, wdev, type, mbm);
+ }
+ 
+-int mtk_cfg_get_txpower(struct wiphy *wiphy,
+-			struct wireless_dev *wdev,
+-			int *dbm)
++int mtk_cfg_get_txpower(struct wiphy *wiphy, struct wireless_dev *wdev, int radio_idx, unsigned int link_id, int *dbm)
+ {
+ 	struct GLUE_INFO *prGlueInfo = NULL;
+ 
+diff --git c/wlan/core/gen4m/os/linux/gl_init.c w/wlan/core/gen4m/os/linux/gl_init.c
+index f211045..9d94cda 100644
+--- c/wlan/core/gen4m/os/linux/gl_init.c
++++ w/wlan/core/gen4m/os/linux/gl_init.c
+@@ -150,7 +150,6 @@ struct WLANDEV_INFO {
+ 
+ MODULE_AUTHOR(NIC_AUTHOR);
+ MODULE_DESCRIPTION(NIC_DESC);
+-MODULE_SUPPORTED_DEVICE(NIC_NAME);
+ 
+ /* MODULE_LICENSE("MTK Propietary"); */
+ MODULE_LICENSE("Dual BSD/GPL");
+@@ -1696,7 +1695,6 @@ void print_nv_data(char *title, char *data, int len)
+ void fetch_vendor_addr(struct REG_INFO *prRegInfo)
+ {
+     struct file *fp;
+-    mm_segment_t fs;
+     loff_t pos;
+     uint8_t macAddr[WIFI_MAC_ADDRESS_STR_LEN + 1];
+     int i;
+@@ -1707,12 +1705,9 @@ void fetch_vendor_addr(struct REG_INFO *prRegInfo)
+         pr_info("%s: Open mac info file fail, errno=%ld\n", WLAN_MODULE_NAME, PTR_ERR(fp));
+         return;
+     }
+-    fs = get_fs();
+-    set_fs(KERNEL_DS);
+     pos = 0;
+-    vfs_read(fp, macAddr, WIFI_MAC_ADDRESS_STR_LEN, &pos);
++    kernel_read(fp, macAddr, WIFI_MAC_ADDRESS_STR_LEN, &pos);
+     filp_close(fp, NULL);
+-    set_fs(fs);
+     macAddr[WIFI_MAC_ADDRESS_STR_LEN] = '\0';
+     pr_info("%s: Get mac address:%s\n", WLAN_MODULE_NAME, macAddr);
+ 
+@@ -2390,7 +2385,7 @@ static int wlanInit(struct net_device *prDev)
+ 	spin_lock_init(&prNetDevPrivate->napi_spinlock);
+ 	prNetDevPrivate->napi.dev = prDev;
+ 	netif_napi_add(prNetDevPrivate->napi.dev,
+-		&prNetDevPrivate->napi, kal_napi_poll, 64);
++		&prNetDevPrivate->napi, kal_napi_poll);
+ 	DBGLOG(INIT, INFO,
+ 		"GRO interface added successfully:%p\n", prDev);
+ #endif
+@@ -2460,7 +2455,7 @@ static int wlanSetMacAddress(struct net_device *ndev, void *addr)
+ 		wlanGetBssIdx(ndev));
+ 
+ 	COPY_MAC_ADDR(prAisBssInfo->aucOwnMacAddr, sa->sa_data);
+-	COPY_MAC_ADDR(ndev->dev_addr, sa->sa_data);
++	dev_addr_set(ndev, sa->sa_data);
+ 	DBGLOG(INIT, INFO,
+ 		"[wlan%d] Set connect random macaddr to " MACSTR ".\n",
+ 		prAisBssInfo->ucBssIndex,
+@@ -5153,11 +5148,8 @@ static int32_t wlanOnPreNetRegister(struct GLUE_INFO *prGlueInfo,
+ 			DBGLOG(INIT, WARN, "set MAC addr fail 0x%x\n",
+ 							rStatus);
+ 		} else {
+-			kalMemCopy(prGlueInfo->prDevHandler->dev_addr,
+-					&MacAddr.sa_data, ETH_ALEN);
+-			kalMemCopy(prGlueInfo->prDevHandler->perm_addr,
+-					prGlueInfo->prDevHandler->dev_addr,
+-					ETH_ALEN);
++			dev_addr_set(prGlueInfo->prDevHandler, MacAddr.sa_data);
++			memcpy(prGlueInfo->prDevHandler->perm_addr, MacAddr.sa_data, ETH_ALEN);
+ 
+ #if CFG_SHOW_MACADDR_SOURCE
+ 			DBGLOG(INIT, INFO, "MAC address: " MACSTR,
+@@ -5169,12 +5161,8 @@ static int32_t wlanOnPreNetRegister(struct GLUE_INFO *prGlueInfo,
+ 		if (KAL_AIS_NUM > 1) {
+ 			prDevHandler = wlanGetNetDev(prGlueInfo, 1);
+ 			if (prDevHandler) {
+-				kalMemCopy(prDevHandler->dev_addr,
+-					&prAdapter->rWifiVar.aucMacAddress1,
+-					ETH_ALEN);
+-				kalMemCopy(prDevHandler->perm_addr,
+-					prDevHandler->dev_addr,
+-					ETH_ALEN);
++				dev_addr_set(prDevHandler, prAdapter->rWifiVar.aucMacAddress1);
++				memcpy(prDevHandler->perm_addr, prAdapter->rWifiVar.aucMacAddress1, ETH_ALEN);
+ #if CFG_SHOW_MACADDR_SOURCE
+ 				DBGLOG(INIT, INFO,
+ 					"MAC1 address: " MACSTR,
+@@ -6292,8 +6280,8 @@ static void wlanRemove(void)
+ 
+ 	if (HAL_IS_TX_DIRECT(prAdapter)) {
+ 		if (prAdapter->fgTxDirectInited) {
+-			del_timer_sync(&prAdapter->rTxDirectSkbTimer);
+-			del_timer_sync(&prAdapter->rTxDirectHifTimer);
++			timer_delete_sync(&prAdapter->rTxDirectSkbTimer);
++			timer_delete_sync(&prAdapter->rTxDirectHifTimer);
+ 		}
+ 	}
+ 
+@@ -6640,6 +6628,11 @@ void mtk_wcn_wlan_gen4_exit(void)
+ 	return exitWlan();
+ }
+ EXPORT_SYMBOL(mtk_wcn_wlan_gen4_exit);
++#ifdef MODULE
++/* port: as modules, wmt_drv's weak stub cannot reach us; init here. */
++module_init(initWlan);
++module_exit(exitWlan);
++#endif
+ 
+ #elif ((MTK_WCN_HIF_SDIO == 0) && (CFG_BUILT_IN_DRIVER == 1))
+ 
+diff --git c/wlan/core/gen4m/os/linux/gl_kal.c w/wlan/core/gen4m/os/linux/gl_kal.c
+index e350689..d22ae93 100644
+--- c/wlan/core/gen4m/os/linux/gl_kal.c
++++ w/wlan/core/gen4m/os/linux/gl_kal.c
+@@ -72,11 +72,37 @@
+  *                    E X T E R N A L   R E F E R E N C E S
+  *******************************************************************************
+  */
++#include <net/gro.h>
++#include <linux/timer.h>
++#if IS_ENABLED(CONFIG_FB)
++#include <linux/fb.h>
++#endif
++/* CONFIG_FB is off on this port (simpledrm, no fbdev) and FB_EVENT_BLANK no
++ * longer exists upstream.  The blank notifier is Android power glue: give it
++ * inert stubs so the driver links and never receives a blank event.
++ */
++#if !IS_ENABLED(CONFIG_FB)
++struct fb_event {
++	void *info;
++	void *data;
++};
++static inline int fb_register_client(struct notifier_block *nb)
++{
++	return 0;
++}
++static inline int fb_unregister_client(struct notifier_block *nb)
++{
++	return 0;
++}
++#endif
++#ifndef FB_EVENT_BLANK
++#define FB_EVENT_BLANK 0x09
++#endif
+ #include "gl_os.h"
+ #include "gl_kal.h"
+ #include "gl_wext.h"
+ #include "precomp.h"
+-#include <stdarg.h>
++#include <linux/stdarg.h>
+ 
+ #if CFG_SUPPORT_AGPS_ASSIST
+ #include <net/netlink.h>
+@@ -792,8 +818,7 @@ void kalUpdateMACAddress(IN struct GLUE_INFO *prGlueInfo,
+ 
+ 	if (UNEQUAL_MAC_ADDR(prGlueInfo->prDevHandler->dev_addr,
+ 			     pucMacAddr))
+-		memcpy(prGlueInfo->prDevHandler->dev_addr, pucMacAddr,
+-		       PARAM_MAC_ADDR_LEN);
++		dev_addr_set(prGlueInfo->prDevHandler, pucMacAddr);
+ }
+ 
+ #if CFG_TCP_IP_CHKSUM_OFFLOAD
+@@ -1340,10 +1365,8 @@ uint32_t kalRxIndicateOnePkt(IN struct GLUE_INFO
+ skip_gro:
+ #endif /* CFG_SUPPORT_SKIP_RX_GRO_FOR_TC */
+ #endif
+-	if (!in_interrupt())
+-		netif_rx_ni(prSkb);
+-	else
+-		netif_rx(prSkb);
++	/* netif_rx_ni() was folded into netif_rx() in 5.18 */
++	netif_rx(prSkb);
+ 
+ 	return WLAN_STATUS_SUCCESS;
+ }
+@@ -1672,7 +1695,7 @@ kalIndicateStatusAndComplete(IN struct GLUE_INFO
+ 				aisGetConnSettings(prAdapter, ucBssIndex);
+ 			if (eStatus == WLAN_STATUS_ROAM_OUT_FIND_BEST) {
+ #if KERNEL_VERSION(4, 12, 0) <= CFG80211_VERSION_CODE
+-				rRoamInfo.bss = bss;
++				rRoamInfo.links[0].bss = bss;
+ 				rRoamInfo.req_ie = prConnSettings->aucReqIe;
+ 				rRoamInfo.req_ie_len =
+ 					prConnSettings->u4ReqIeLength;
+@@ -3295,8 +3318,11 @@ static int32_t kalThreadSchedRetrieve(struct task_struct *pThread,
+ 
+ 	pSched->time = sec*1000 + usec/1000;
+ 	pSched->exec = se.sum_exec_runtime;
+-	pSched->runnable = se.statistics.wait_sum;
+-	pSched->iowait = se.statistics.iowait_sum;
++	/* TODO(port): struct sched_entity lost its statistics member in 6.6;
++	 * wait/iowait accounting is no longer exported to modules.
++	 */
++	pSched->runnable = 0;
++	pSched->iowait = 0;
+ 
+ 	return 0;
+ #else
+@@ -5335,7 +5361,7 @@ u_int8_t kalSetTimer(IN struct GLUE_INFO *prGlueInfo,
+ 		mod_timer(&prGlueInfo->tickfn,
+ 			  jiffies + u4Interval * HZ / MSEC_PER_SEC);
+ 	} else {
+-		del_timer_sync(&(prGlueInfo->tickfn));
++		timer_delete_sync(&(prGlueInfo->tickfn));
+ 
+ 		prGlueInfo->tickfn.expires = jiffies + u4Interval * HZ /
+ 					     MSEC_PER_SEC;
+@@ -5361,7 +5387,7 @@ u_int8_t kalCancelTimer(IN struct GLUE_INFO *prGlueInfo)
+ 
+ 	clear_bit(GLUE_FLAG_TIMEOUT_BIT, &prGlueInfo->ulFlag);
+ 
+-	if (del_timer_sync(&(prGlueInfo->tickfn)) >= 0)
++	if (timer_delete_sync(&(prGlueInfo->tickfn)) >= 0)
+ 		return TRUE;
+ 	else
+ 		return FALSE;
+@@ -7124,7 +7150,7 @@ u_int8_t kalSendUevent(const char *src)
+ 	envp[1] = NULL;
+ 
+ 	/*send uevent*/
+-	strlcpy(event_string, src, sizeof(event_string));
++	strscpy(event_string, src, sizeof(event_string));
+ 	if (event_string[0] == '\0') { /*string is null*/
+ 		return FALSE;
+ 	}
+@@ -8125,13 +8151,9 @@ static uint32_t kalPerMonUpdate(IN struct ADAPTER *prAdapter)
+ 		ndev = wlanGetNetDev(glue, i);
+ 		if (ndev) {
+ 			pos += kalSnprintf(pos, end - pos,
+-				"[%llu:%llu:%llu:%llu]",
++				"[%llu:%llu]",
+ 				(unsigned long long) ndev->stats.tx_dropped,
+-				(unsigned long long)
+-					atomic_long_read(&ndev->tx_dropped),
+-				(unsigned long long) ndev->stats.rx_dropped,
+-				(unsigned long long)
+-					atomic_long_read(&ndev->rx_dropped));
++				(unsigned long long) ndev->stats.rx_dropped);
+ 		}
+ 	}
+ 
+@@ -8558,61 +8580,12 @@ int32_t __weak kalCheckTputLoad(IN struct ADAPTER *prAdapter,
+ /* mimic store_rps_map as net-sysfs.c does */
+ int wlan_set_rps_map(struct netdev_rx_queue *queue, unsigned long rps_value)
+ {
+-#if KERNEL_VERSION(4, 14, 0) <= CFG80211_VERSION_CODE
+-	struct rps_map *old_map, *map;
+-	cpumask_var_t mask;
+-	int cpu, i;
+-	static DEFINE_MUTEX(rps_map_mutex);
+-
+-	if (!alloc_cpumask_var(&mask, GFP_KERNEL))
+-		return -ENOMEM;
+-
+-	*cpumask_bits(mask) = rps_value;
+-	map = kzalloc(max_t(unsigned int,
+-			RPS_MAP_SIZE(cpumask_weight(mask)), L1_CACHE_BYTES),
+-			GFP_KERNEL);
+-	if (!map) {
+-		free_cpumask_var(mask);
+-		return -ENOMEM;
+-	}
+-
+-	i = 0;
+-	for_each_cpu_and(cpu, mask, cpu_online_mask)
+-		map->cpus[i++] = cpu;
+-
+-	if (i) {
+-		map->len = i;
+-	} else {
+-		kfree(map);
+-		map = NULL;
+-	}
+-
+-	mutex_lock(&rps_map_mutex);
+-	old_map = rcu_dereference_protected(queue->rps_map,
+-				mutex_is_locked(&rps_map_mutex));
+-	rcu_assign_pointer(queue->rps_map, map);
+-	if (map)
+-#if KERNEL_VERSION(5, 4, 0) <= LINUX_VERSION_CODE
+-		static_branch_inc(&rps_needed);
+-#else
+-		static_key_slow_inc(&rps_needed);
+-#endif
+-	if (old_map)
+-#if KERNEL_VERSION(5, 4, 0) <= LINUX_VERSION_CODE
+-		static_branch_dec(&rps_needed);
+-#else
+-		static_key_slow_dec(&rps_needed);
+-#endif
+-	mutex_unlock(&rps_map_mutex);
+-
+-	if (old_map)
+-		kfree_rcu(old_map, rcu);
+-	free_cpumask_var(mask);
+-
+-	return 0;
+-#else
+-	return 0;
+-#endif
++	/* TODO(port): struct rps_map, RPS_MAP_SIZE() and netdev_rx_queue->
++	 * rps_map are no longer visible outside net/core.  This is a sysfs
++	 * tuning aid only, so report it unsupported rather than cloning the
++	 * core implementation.
++	 */
++	return -EOPNOTSUPP;
+ }
+ 
+ void kalSetRpsMap(IN struct GLUE_INFO *glue, IN unsigned long value)
+@@ -8626,8 +8599,10 @@ void kalSetRpsMap(IN struct GLUE_INFO *glue, IN unsigned long value)
+ 	for (i = 0; i < BSS_DEFAULT_NUM; i++) {
+ 		dev = wlanGetNetDev(glue, i);
+ 		if (dev) {
+-			for (j = 0; j < dev->real_num_rx_queues; ++j)
+-				wlan_set_rps_map(&dev->_rx[j], value);
++			/* TODO(port): netdev_rx_queue internals are private;
++			 * wlan_set_rps_map() is unsupported (see gl_kal.c).
++			 */
++			(void)j;
+ 		}
+ 	}
+ }
+@@ -8871,7 +8846,7 @@ void kalIndicateChannelSwitch(IN struct GLUE_INFO *prGlueInfo,
+ 	DBGLOG(REQ, STATE, "DFS channel switch to %d\n", ucChannelNum);
+ 
+ 	cfg80211_chandef_create(&chandef, prChannel, rChannelType);
+-	cfg80211_ch_switch_notify(prGlueInfo->prDevHandler, &chandef);
++	cfg80211_ch_switch_notify(prGlueInfo->prDevHandler, &chandef, 0);
+ }
+ #endif
+ 
+@@ -10792,6 +10767,6 @@ void kalBatNotifierUnReg(void)
+ 
+ #endif
+ 
+-#if KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
+-MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+-#endif
++/* MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem...) was an Android
++ * kernel hack; mainline does not need it.
++ */
+diff --git c/wlan/core/gen4m/os/linux/gl_p2p.c w/wlan/core/gen4m/os/linux/gl_p2p.c
+index 9eeb149..28063de 100644
+--- c/wlan/core/gen4m/os/linux/gl_p2p.c
++++ w/wlan/core/gen4m/os/linux/gl_p2p.c
+@@ -564,7 +564,7 @@ static int p2pInit(struct net_device *prDev)
+ 	spin_lock_init(&prNetDevPrivate->napi_spinlock);
+ 	prNetDevPrivate->napi.dev = prDev;
+ 	netif_napi_add(prNetDevPrivate->napi.dev,
+-		&prNetDevPrivate->napi, p2p_napi_poll, 64);
++		&prNetDevPrivate->napi, p2p_napi_poll);
+ 	DBGLOG(INIT, TRACE,
+ 		"GRO interface added successfully:%p\n", prDev);
+ #endif
+@@ -1371,8 +1371,8 @@ u_int8_t glRegisterP2P(struct GLUE_INFO *prGlueInfo, const char *prDevName,
+ 
+ 		DBGLOG(INIT, INFO, "Set p2p role[%d] mac to " MACSTR "\n",
+ 				i, MAC2STR(rMacAddr));
+-		kalMemCopy(prP2pDev->dev_addr, rMacAddr, ETH_ALEN);
+-		kalMemCopy(prP2pDev->perm_addr, prP2pDev->dev_addr, ETH_ALEN);
++		dev_addr_set(prP2pDev, rMacAddr);
++		memcpy(prP2pDev->perm_addr, rMacAddr, ETH_ALEN);
+ 
+ 		if (glSetupP2P(prGlueInfo, prP2pWdev, prP2pDev, i, fgIsApMode)
+ 				 != 0) {
+@@ -2278,7 +2278,7 @@ skip_role:
+ 		return -EINVAL;
+ 	}
+ 
+-	COPY_MAC_ADDR(prDev->dev_addr, sa->sa_data);
++	dev_addr_set(prDev, sa->sa_data);
+ 
+ 	if ((prP2pInfo->prDevHandler == prDev)
+ 		&& mtk_IsP2PNetDevice(prGlueInfo, prDev)) {
+diff --git c/wlan/core/gen4m/os/linux/gl_p2p_cfg80211.c w/wlan/core/gen4m/os/linux/gl_p2p_cfg80211.c
+index 92014b0..bbc9fa2 100644
+--- c/wlan/core/gen4m/os/linux/gl_p2p_cfg80211.c
++++ w/wlan/core/gen4m/os/linux/gl_p2p_cfg80211.c
+@@ -411,8 +411,8 @@ struct wireless_dev *mtk_p2p_cfg80211_add_iface(struct wiphy *wiphy,
+ 					prGlueInfo->prAdapter
+ 						->prP2pInfo->u4DeviceNum << 2;
+ 		}
+-		kalMemCopy(prNewNetDevice->dev_addr, rMacAddr, ETH_ALEN);
+-		kalMemCopy(prNewNetDevice->perm_addr, rMacAddr, ETH_ALEN);
++		dev_addr_set(prNewNetDevice, rMacAddr);
++		memcpy(prNewNetDevice->perm_addr, rMacAddr, ETH_ALEN);
+ 
+ 		DBGLOG(P2P, INFO,
+ 			"mtk_p2p_cfg80211_add_iface ucBssIdx=%d\n",
+diff --git c/wlan/core/gen4m/os/linux/gl_p2p_kal.c w/wlan/core/gen4m/os/linux/gl_p2p_kal.c
+index 0e0282d..6f21fb1 100644
+--- c/wlan/core/gen4m/os/linux/gl_p2p_kal.c
++++ w/wlan/core/gen4m/os/linux/gl_p2p_kal.c
+@@ -1626,8 +1626,7 @@ kalP2PGOStationUpdate(IN struct GLUE_INFO *prGlueInfo,
+ 			rStationInfo.assoc_req_ies_len =
+ 				prCliStaRec->u2AssocReqIeLen;
+ 
+-			cfg80211_new_sta(prP2pGlueInfo->aprRoleHandler,
+-				/* struct net_device * dev, */
++			cfg80211_new_sta(prP2pGlueInfo->aprRoleHandler->ieee80211_ptr,
+ 				prCliStaRec->aucMacAddr,
+ 				&rStationInfo, GFP_KERNEL);
+ 		} else {
+@@ -1640,8 +1639,8 @@ kalP2PGOStationUpdate(IN struct GLUE_INFO *prGlueInfo,
+ 				if (prCliStaRec->fgIsConnected == FALSE)
+ 					break;
+ 				prCliStaRec->fgIsConnected = FALSE;
+-				cfg80211_del_sta(prP2pGlueInfo->aprRoleHandler,
+-					/* struct net_device * dev, */
++				cfg80211_del_sta(
++					prP2pGlueInfo->aprRoleHandler->ieee80211_ptr,
+ 					prCliStaRec->aucMacAddr, GFP_KERNEL);
+ 			}
+ #if CFG_TC10_FEATURE
+@@ -2634,5 +2633,5 @@ void kalP2pIndicateChnlSwitch(IN struct ADAPTER *prAdapter,
+ 	/* Ch notify */
+ 	cfg80211_ch_switch_notify(
+ 		prNetdevice,
+-		prP2PInfo->chandef);
++		prP2PInfo->chandef, 0);
+ }
+diff --git c/wlan/core/gen4m/os/linux/gl_rst.c w/wlan/core/gen4m/os/linux/gl_rst.c
+index 0564cc8..c4e0c97 100644
+--- c/wlan/core/gen4m/os/linux/gl_rst.c
++++ w/wlan/core/gen4m/os/linux/gl_rst.c
+@@ -70,6 +70,7 @@
+  *                    E X T E R N A L   R E F E R E N C E S
+  *******************************************************************************
+  */
++#include <linux/sched/clock.h>
+ #include <linux/kernel.h>
+ #include <linux/workqueue.h>
+ #if CFG_TC10_FEATURE
+diff --git c/wlan/core/gen4m/os/linux/gl_sa_log.c w/wlan/core/gen4m/os/linux/gl_sa_log.c
+index d84eff3..7f13a0d 100644
+--- c/wlan/core/gen4m/os/linux/gl_sa_log.c
++++ w/wlan/core/gen4m/os/linux/gl_sa_log.c
+@@ -382,7 +382,7 @@ int SalogInit(void)
+ 	if (result < 0)
+ 		goto free_dev;
+ 
+-	gSaDev->driver_class = class_create(THIS_MODULE,
++	gSaDev->driver_class = class_create(
+ 		SA_DRIVER_NAME);
+ 
+ 	if (KAL_IS_ERR(gSaDev->driver_class)) {
+diff --git c/wlan/core/gen4m/os/linux/hif/axi/axi.c w/wlan/core/gen4m/os/linux/hif/axi/axi.c
+index c763459..1b1ecab 100644
+--- c/wlan/core/gen4m/os/linux/hif/axi/axi.c
++++ w/wlan/core/gen4m/os/linux/hif/axi/axi.c
+@@ -921,7 +921,7 @@ exit:
+ 	return ret;
+ }
+ 
+-static int mtk_axi_remove(IN struct platform_device *pdev)
++static void mtk_axi_remove(struct platform_device *pdev)
+ {
+ #if (CFG_SUPPORT_POWER_THROTTLING == 1)
+ 	conn_pwr_register_event_cb(CONN_PWR_DRV_WIFI, NULL);
+@@ -943,7 +943,6 @@ static int mtk_axi_remove(IN struct platform_device *pdev)
+ 	hifAxiRemove();
+ #endif
+ 	platform_set_drvdata(pdev, NULL);
+-	return 0;
+ }
+ 
+ static int mtk_axi_suspend(IN struct platform_device *pdev,
+diff --git c/wlan/core/gen4m/os/linux/hif/common/hal_pdma.c w/wlan/core/gen4m/os/linux/hif/common/hal_pdma.c
+index ce0008f..2e5c69e 100644
+--- c/wlan/core/gen4m/os/linux/hif/common/hal_pdma.c
++++ w/wlan/core/gen4m/os/linux/hif/common/hal_pdma.c
+@@ -69,6 +69,7 @@
+  *                    E X T E R N A L   R E F E R E N C E S
+  *******************************************************************************
+  */
++#include <linux/sched/clock.h>
+ #include "precomp.h"
+ 
+ #include "hif_pdma.h"
+@@ -1151,7 +1152,7 @@ void halHifSwInfoUnInit(IN struct GLUE_INFO *prGlueInfo)
+ 	prBusInfo = prChipInfo->bus_info;
+ 	prSwWfdmaInfo = &prBusInfo->rSwWfdmaInfo;
+ 
+-	del_timer_sync(&prHifInfo->rSerTimer);
++	timer_delete_sync(&prHifInfo->rSerTimer);
+ 
+ 	halUninitMsduTokenInfo(prGlueInfo->prAdapter);
+ 	halWpdmaFreeRing(prGlueInfo);
+@@ -2424,11 +2425,11 @@ enum ENUM_CMD_TX_RESULT halWpdmaWriteCmd(IN struct GLUE_INFO *prGlueInfo,
+ 	pTxD->Burst = 0;
+ 	pTxD->DMADONE = 0;
+ 
+-	NIC_DUMP_TXDMAD_HEADER(prAdapter, "Dump CMD TXDMAD:\n");
+-	NIC_DUMP_TXDMAD(prAdapter, (uint8_t *)pTxD, sizeof(struct TXD_STRUCT));
++	NIC_DUMP_TXDMAD_HEADER(prGlueInfo->prAdapter, "Dump CMD TXDMAD:\n");
++	NIC_DUMP_TXDMAD(prGlueInfo->prAdapter, (uint8_t *)pTxD, sizeof(struct TXD_STRUCT));
+ 
+-	NIC_DUMP_TXD_HEADER(prAdapter, "Dump CMD TXD:\n");
+-	NIC_DUMP_TXD(prAdapter, prCmdInfo->pucTxd, prCmdInfo->u4TxdLen);
++	NIC_DUMP_TXD_HEADER(prGlueInfo->prAdapter, "Dump CMD TXD:\n");
++	NIC_DUMP_TXD(prGlueInfo->prAdapter, prCmdInfo->pucTxd, prCmdInfo->u4TxdLen);
+ 
+ 	/* Increase TX_CTX_IDX, but write to register later. */
+ 	INC_RING_INDEX(prTxRing->TxCpuIdx, TX_RING_SIZE);
+@@ -2521,8 +2522,8 @@ static bool halWpdmaFillTxRing(struct GLUE_INFO *prGlueInfo,
+ 	pTxD->Burst = 0;
+ 	pTxD->DMADONE = 0;
+ 
+-	NIC_DUMP_TXDMAD_HEADER(prAdapter, "Dump TXDMAD:\n");
+-	NIC_DUMP_TXDMAD(prAdapter, (uint8_t *)pTxD, sizeof(struct TXD_STRUCT));
++	NIC_DUMP_TXDMAD_HEADER(prGlueInfo->prAdapter, "Dump TXDMAD:\n");
++	NIC_DUMP_TXDMAD(prGlueInfo->prAdapter, (uint8_t *)pTxD, sizeof(struct TXD_STRUCT));
+ 
+ 	/* Increase TX_CTX_IDX, but write to register later. */
+ 	INC_RING_INDEX(prTxRing->TxCpuIdx, TX_RING_SIZE);
+@@ -3198,7 +3199,7 @@ void halHwRecoveryFromError(IN struct ADAPTER *prAdapter)
+ 
+ 	case ERR_RECOV_WAIT_MCU_NORMAL:
+ 		if (u4Status & ERROR_DETECT_MCU_NORMAL_STATE) {
+-			del_timer_sync(&prHifInfo->rSerTimer);
++			timer_delete_sync(&prHifInfo->rSerTimer);
+ 
+ 			/* update Beacon frame if operating in AP mode. */
+ 			DBGLOG(HAL, INFO, "SER(T) Host re-initialize BCN\n");
+diff --git c/wlan/core/gen4m/os/linux/hif/common/kal_pdma.c w/wlan/core/gen4m/os/linux/hif/common/kal_pdma.c
+index 45aa76d..ae2fe5c 100644
+--- c/wlan/core/gen4m/os/linux/hif/common/kal_pdma.c
++++ w/wlan/core/gen4m/os/linux/hif/common/kal_pdma.c
+@@ -769,8 +769,8 @@ static bool kalDevKickMsduData(struct GLUE_INFO *prGlueInfo)
+ 	return fgRet;
+ }
+ 
+-static int kalAmsduTxDCmp(void *prPriv, struct list_head *prList1,
+-			  struct list_head *prList2)
++static int kalAmsduTxDCmp(void *prPriv, const struct list_head *prList1,
++			  const struct list_head *prList2)
+ {
+ 	struct TX_DATA_REQ *prTxReq1, *prTxReq2;
+ 	struct sk_buff *prSkb1, *prSkb2;
+diff --git c/wlan/core/gen4m/os/linux/include/gl_cfg80211.h w/wlan/core/gen4m/os/linux/include/gl_cfg80211.h
+index c06c12d..d51dd10 100644
+--- c/wlan/core/gen4m/os/linux/include/gl_cfg80211.h
++++ w/wlan/core/gen4m/os/linux/include/gl_cfg80211.h
+@@ -511,52 +511,29 @@ int mtk_cfg_change_iface(struct wiphy *wiphy,
+ 			 enum nl80211_iftype type, u32 *flags,
+ 			 struct vif_params *params);
+ #endif
+-int mtk_cfg_add_key(struct wiphy *wiphy,
+-		    struct net_device *ndev, u8 key_index,
+-		    bool pairwise, const u8 *mac_addr,
+-		    struct key_params *params);
+-int mtk_cfg_get_key(struct wiphy *wiphy,
+-		    struct net_device *ndev, u8 key_index,
+-		    bool pairwise, const u8 *mac_addr, void *cookie,
+-		    void (*callback)(void *cookie, struct key_params *));
+-int mtk_cfg_del_key(struct wiphy *wiphy,
+-		    struct net_device *ndev, u8 key_index,
+-		    bool pairwise, const u8 *mac_addr);
+-int mtk_cfg_set_default_key(struct wiphy *wiphy,
+-			    struct net_device *ndev,
+-			    u8 key_index, bool unicast, bool multicast);
++int mtk_cfg_add_key(struct wiphy *wiphy, struct wireless_dev *wdev, int link_id, u8 key_index, bool pairwise, const u8 *mac_addr, struct key_params *params);
++int mtk_cfg_get_key(struct wiphy *wiphy, struct wireless_dev *wdev, int link_id, u8 key_index, bool pairwise, const u8 *mac_addr, void *cookie, void (*callback)(void *cookie, struct key_params *));
++int mtk_cfg_del_key(struct wiphy *wiphy, struct wireless_dev *wdev, int link_id, u8 key_index, bool pairwise, const u8 *mac_addr);
++int mtk_cfg_set_default_key(struct wiphy *wiphy, struct net_device *ndev, int link_id, u8 key_index, bool unicast, bool multicast);
+ 
+-int mtk_cfg_set_default_mgmt_key(struct wiphy *wiphy,
+-		struct net_device *ndev, u8 key_index);
++int mtk_cfg_set_default_mgmt_key(struct wiphy *wiphy, struct wireless_dev *wdev, int link_id, u8 key_index);
+ 
+ #if KERNEL_VERSION(3, 16, 0) <= CFG80211_VERSION_CODE
+-int mtk_cfg_get_station(struct wiphy *wiphy,
+-			struct net_device *ndev,
+-			const u8 *mac, struct station_info *sinfo);
++int mtk_cfg_get_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac, struct station_info *sinfo);
+ #else
+-int mtk_cfg_get_station(struct wiphy *wiphy,
+-			struct net_device *ndev,
+-			u8 *mac, struct station_info *sinfo);
++int mtk_cfg_get_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac, struct station_info *sinfo);
+ #endif
+ 
+ #if CFG_SUPPORT_TDLS
+ #if KERNEL_VERSION(3, 16, 0) <= CFG80211_VERSION_CODE
+-int mtk_cfg_change_station(struct wiphy *wiphy,
+-			   struct net_device *ndev,
+-			   const u8 *mac, struct station_parameters *params);
++int mtk_cfg_change_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac, struct station_parameters *params);
+ #else
+-int mtk_cfg_change_station(struct wiphy *wiphy,
+-			   struct net_device *ndev,
+-			   u8 *mac, struct station_parameters *params);
++int mtk_cfg_change_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac, struct station_parameters *params);
+ #endif
+ #if KERNEL_VERSION(3, 16, 0) <= CFG80211_VERSION_CODE
+-int mtk_cfg_add_station(struct wiphy *wiphy,
+-			struct net_device *ndev,
+-			const u8 *mac, struct station_parameters *params);
++int mtk_cfg_add_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac, struct station_parameters *params);
+ #else
+-int mtk_cfg_add_station(struct wiphy *wiphy,
+-			struct net_device *ndev,
+-			u8 *mac, struct station_parameters *params);
++int mtk_cfg_add_station(struct wiphy *wiphy, struct wireless_dev *wdev, const u8 *mac, struct station_parameters *params);
+ #endif
+ #if KERNEL_VERSION(3, 16, 0) <= CFG80211_VERSION_CODE
+ int mtk_cfg_tdls_oper(struct wiphy *wiphy,
+@@ -568,44 +545,25 @@ int mtk_cfg_tdls_oper(struct wiphy *wiphy,
+ 		      u8 *peer, enum nl80211_tdls_operation oper);
+ #endif
+ #if KERNEL_VERSION(3, 18, 0) <= CFG80211_VERSION_CODE
+-int mtk_cfg_tdls_mgmt(struct wiphy *wiphy,
+-		      struct net_device *ndev,
+-		      const u8 *peer, u8 action_code, u8 dialog_token,
+-		      u16 status_code,
+-		      u32 peer_capability, bool initiator, const u8 *buf,
+-		      size_t len);
++int mtk_cfg_tdls_mgmt(struct wiphy *wiphy, struct net_device *dev, const u8 *peer, int link_id, u8 action_code, u8 dialog_token, u16 status_code, u32 peer_capability, bool initiator, const u8 *buf, size_t len);
+ #elif KERNEL_VERSION(3, 16, 0) <= CFG80211_VERSION_CODE
+-int mtk_cfg_tdls_mgmt(struct wiphy *wiphy,
+-		      struct net_device *ndev,
+-		      const u8 *peer, u8 action_code, u8 dialog_token,
+-		      u16 status_code,
+-		      u32 peer_capability, const u8 *buf, size_t len);
++int mtk_cfg_tdls_mgmt(struct wiphy *wiphy, struct net_device *dev, const u8 *peer, int link_id, u8 action_code, u8 dialog_token, u16 status_code, u32 peer_capability, bool initiator, const u8 *buf, size_t len);
+ #else
+-int mtk_cfg_tdls_mgmt(struct wiphy *wiphy,
+-		      struct net_device *ndev,
+-		      u8 *peer, u8 action_code,
+-		      u8 dialog_token, u16 status_code,
+-		      const u8 *buf, size_t len);
++int mtk_cfg_tdls_mgmt(struct wiphy *wiphy, struct net_device *dev, const u8 *peer, int link_id, u8 action_code, u8 dialog_token, u16 status_code, u32 peer_capability, bool initiator, const u8 *buf, size_t len);
+ #endif
+ #endif /* CFG_SUPPORT_TDLS */
+ 
+ #if KERNEL_VERSION(3, 19, 0) <= CFG80211_VERSION_CODE
+-int mtk_cfg_del_station(struct wiphy *wiphy,
+-			struct net_device *ndev,
+-			struct station_del_parameters *params);
++int mtk_cfg_del_station(struct wiphy *wiphy, struct wireless_dev *wdev, struct station_del_parameters *params);
+ #elif KERNEL_VERSION(3, 16, 0) <= CFG80211_VERSION_CODE
+-int mtk_cfg_del_station(struct wiphy *wiphy,
+-			struct net_device *ndev,
+-			const u8 *mac);
++int mtk_cfg_del_station(struct wiphy *wiphy, struct wireless_dev *wdev, struct station_del_parameters *params);
+ #else
+-int mtk_cfg_del_station(struct wiphy *wiphy,
+-			struct net_device *ndev, u8 *mac);
++int mtk_cfg_del_station(struct wiphy *wiphy, struct wireless_dev *wdev, struct station_del_parameters *params);
+ #endif
+ int mtk_cfg_scan(struct wiphy *wiphy,
+ 		 struct cfg80211_scan_request *request);
+ #if KERNEL_VERSION(4, 5, 0) <= CFG80211_VERSION_CODE
+-void mtk_cfg_abort_scan(struct wiphy *wiphy,
+-			struct wireless_dev *wdev);
++void mtk_cfg_abort_scan(struct wiphy *wiphy, struct wireless_dev *wdev);
+ #endif
+ 
+ #if CFG_SUPPORT_SCHED_SCAN
+@@ -709,14 +667,9 @@ int mtk_cfg_testmode_cmd(struct wiphy *wiphy, void *data,
+ 
+ #if (CFG_SUPPORT_DFS_MASTER == 1)
+ #if KERNEL_VERSION(3, 15, 0) <= CFG80211_VERSION_CODE
+-int mtk_cfg_start_radar_detection(struct wiphy *wiphy,
+-				  struct net_device *dev,
+-				  struct cfg80211_chan_def *chandef,
+-				  unsigned int cac_time_ms);
++int mtk_cfg_start_radar_detection(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_chan_def *chandef, u32 cac_time_ms, int link_id);
+ #else
+-int mtk_cfg_start_radar_detection(struct wiphy *wiphy,
+-				  struct net_device *dev,
+-				  struct cfg80211_chan_def *chandef);
++int mtk_cfg_start_radar_detection(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_chan_def *chandef, u32 cac_time_ms, int link_id);
+ #endif
+ 
+ 
+@@ -744,23 +697,12 @@ int mtk_cfg_disassoc(struct wiphy *wiphy,
+ int mtk_cfg_start_ap(struct wiphy *wiphy,
+ 		     struct net_device *dev,
+ 		     struct cfg80211_ap_settings *settings);
+-int mtk_cfg_change_beacon(struct wiphy *wiphy,
+-			  struct net_device *dev,
+-			  struct cfg80211_beacon_data *info);
+-int mtk_cfg_stop_ap(struct wiphy *wiphy,
+-		    struct net_device *dev);
+-int mtk_cfg_set_wiphy_params(struct wiphy *wiphy,
+-			     u32 changed);
+-int mtk_cfg_set_bitrate_mask(struct wiphy *wiphy,
+-			     struct net_device *dev,
+-			     const u8 *peer,
+-			     const struct cfg80211_bitrate_mask *mask);
+-int mtk_cfg_set_txpower(struct wiphy *wiphy,
+-			struct wireless_dev *wdev,
+-			enum nl80211_tx_power_setting type, int mbm);
+-int mtk_cfg_get_txpower(struct wiphy *wiphy,
+-			struct wireless_dev *wdev,
+-			int *dbm);
++int mtk_cfg_change_beacon(struct wiphy *wiphy, struct net_device *dev, struct cfg80211_ap_update *info);
++int mtk_cfg_stop_ap(struct wiphy *wiphy, struct net_device *dev, unsigned int link_id);
++int mtk_cfg_set_wiphy_params(struct wiphy *wiphy, int radio_idx, u32 changed);
++int mtk_cfg_set_bitrate_mask(struct wiphy *wiphy, struct net_device *dev, unsigned int link_id, const u8 *peer, const struct cfg80211_bitrate_mask *mask);
++int mtk_cfg_set_txpower(struct wiphy *wiphy, struct wireless_dev *wdev, int radio_idx, enum nl80211_tx_power_setting type, int mbm);
++int mtk_cfg_get_txpower(struct wiphy *wiphy, struct wireless_dev *wdev, int radio_idx, unsigned int link_id, int *dbm);
+ #endif /* (CFG_ENABLE_WIFI_DIRECT_CFG_80211 != 0) */
+ 
+ #endif	/* CFG_ENABLE_UNIFY_WIPHY */
+diff --git c/wlan/core/gen4m/os/linux/include/gl_os.h w/wlan/core/gen4m/os/linux/include/gl_os.h
+index fb61a64..0bf084a 100644
+--- c/wlan/core/gen4m/os/linux/include/gl_os.h
++++ w/wlan/core/gen4m/os/linux/include/gl_os.h
+@@ -1469,4 +1469,10 @@ enum ENUM_NVRAM_STATE wlanNvramGetState(void);
+ int connsys_power_event_notification(enum conn_pwr_event_type type, void *data);
+ #endif
+ 
++/* mainline 6.15 removed from_timer() in favour of timer_container_of() */
++#ifndef from_timer
++#define from_timer(var, callback_timer, timer_fieldname) \
++	container_of(callback_timer, typeof(*var), timer_fieldname)
++#endif
++
+ #endif /* _GL_OS_H */

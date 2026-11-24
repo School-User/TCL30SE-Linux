@@ -1,0 +1,40 @@
+#!/bin/sh
+# hwplay-launch [FILE|URL]: the "Video Player" app. With an argument (e.g. Open With from the file manager) it plays it.
+# Without one it shows a touch menu: the link on the clipboard, videos in ~/Videos and ~/Downloads, or type/paste a link.
+export BEMENU_BACKEND=wayland
+log=${XDG_RUNTIME_DIR:-/tmp}/hwplay-launch.log
+# One player at a time: the hardware decoder and its 5 MB contiguous buffer are shared, and a second pipeline corrupts the first.
+# fd 9 stays open in mpv/vdpipe, so the lock is held until the whole player exits.
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/hwplay.lock"
+flock -n 9 || { notify-send "Video Player" "Already playing - close the current video first."; exit 0; }
+
+play() {
+	notify-send -t 4000 "Video Player" "Loading $(basename "$1")..."
+	if ! hwplay "$1" >"$log" 2>&1; then
+		msg=$(grep -E "^hwplay:|ERROR" "$log" | tail -2)
+		notify-send -u critical "Video Player" "Could not play it.
+${msg:-see $log}"
+	fi
+}
+
+[ $# -ge 1 ] && { play "$1"; exit; }
+
+clip=$(wl-paste -n 2>/dev/null | head -1)
+case $clip in http*://*) ;; *) clip= ;; esac
+paste="Type or paste a link..."
+
+choice=$({
+	[ -n "$clip" ] && echo "▶ $clip"
+	find "$HOME/Videos" "$HOME/Downloads" -maxdepth 2 -type f \
+		\( -iname '*.mp4' -o -iname '*.mkv' -o -iname '*.webm' -o -iname '*.mov' -o -iname '*.m4v' \) 2>/dev/null |
+		sed "s|^$HOME/||" | sort
+	echo "$paste"
+} | bemenu -i -l 10 -c -W 0.9 -H 44 -p "Play" --fn "sans 13" --scrollbar autohide)
+
+[ -n "$choice" ] || exit 0
+case $choice in
+"▶ "*) play "${choice#▶ }" ;;
+"$paste") url=$(printf '' | bemenu -c -W 0.9 -H 44 -p "Link:" --fn "sans 13") && [ -n "$url" ] && play "$url" ;;
+http*://*) play "$choice" ;;			# typed straight into the filter box
+*) [ -e "$HOME/$choice" ] && play "$HOME/$choice" ;;
+esac

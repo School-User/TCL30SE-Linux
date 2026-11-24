@@ -1,0 +1,22 @@
+#!/bin/sh
+# Route audio by headphone plug state (mt6357-jack input device "Headphone Jack").
+# Plugged: speaker amp off, headphone jack on. Unplugged: jack off, line-out + speaker amp on.
+N=$(grep -l "^Headphone Jack$" /sys/class/input/input*/name | head -1) || exit 1
+D=/dev/input/$(basename "$(ls -d "$(dirname "$N")"/event* | head -1)")
+m(){ amixer -c0 -q sset "$1" "$2"; }
+apply(){
+  if [ "$1" = 1 ]; then
+    /usr/local/bin/aw87-spk off; m "Line Out Source" Open
+    m "Headphone Left Source" DAC; m "Headphone Right Source" DAC; echo "casper-jack: headphones"
+  else
+    m "Headphone Left Source" Open; m "Headphone Right Source" Open
+    m "Line Out Source" Playback; /usr/local/bin/aw87-spk on; echo "casper-jack: speaker"
+  fi
+}
+evtest --query "$D" EV_SW SW_HEADPHONE_INSERT; [ $? = 10 ] && apply 1 || apply 0
+evtest "$D" | while read -r l; do
+  case "$l" in
+    *SW_HEADPHONE_INSERT*"value 1"*) apply 1 ;;
+    *SW_HEADPHONE_INSERT*"value 0"*) apply 0 ;;
+  esac
+done

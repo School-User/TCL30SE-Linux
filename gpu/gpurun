@@ -1,0 +1,12 @@
+#!/bin/sh
+# Run a program with OpenGL ES / EGL on the PowerVR GPU (libhybris wrappers -> vendor libEGL_mtk/libGLESv2_mtk).
+# usage: gpurun <command> [args...]
+# EGL_PLATFORM=null: offscreen (pbuffer) rendering only, no native window surfaces yet.
+# LIBEGL/LIBGLESV2 point libhybris straight at the vendor driver: Android's own libEGL loader would wait forever for the
+# (absent) configstore HIDL service.
+export LD_LIBRARY_PATH=/usr/local/hybris/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+export HYBRIS_LD_LIBRARY_PATH=/vendor/lib64:/system/lib64:/vendor/lib64/hw:/vendor/lib64/egl:/apex/com.android.vndk.v31/lib64:/apex/com.android.runtime/lib64
+export EGL_PLATFORM=null
+export LIBEGL=/vendor/lib64/egl/libEGL_mtk.so
+export LIBGLESV2=/vendor/lib64/egl/libGLESv2_mtk.so
+exec "$@"

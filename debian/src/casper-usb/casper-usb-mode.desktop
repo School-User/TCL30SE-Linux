@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=USB Mode
+Comment=Dock (host), dock with charger (host-ext) or laptop (device); reboots to apply
+Exec=casper-usb-menu
+Icon=drive-removable-media
+Categories=Settings;

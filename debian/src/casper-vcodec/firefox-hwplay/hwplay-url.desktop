@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Hardware player link
+Exec=/usr/local/bin/hwplay-url %u
+MimeType=x-scheme-handler/hwplay;
+NoDisplay=true

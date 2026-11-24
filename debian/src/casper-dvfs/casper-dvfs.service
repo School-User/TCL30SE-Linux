@@ -1,0 +1,10 @@
+[Unit]
+Description=Raise the fast CPU cluster to 1.6 GHz (manual DVFS, guarded)
+After=multi-user.target
+[Service]
+# Type=simple: the script waits 60 s to prove the step is stable; that must not hold up the boot
+Type=simple
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/casper-dvfs-up
+[Install]
+WantedBy=multi-user.target

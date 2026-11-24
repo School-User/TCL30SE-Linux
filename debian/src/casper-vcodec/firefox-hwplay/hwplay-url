@@ -1,0 +1,5 @@
+#!/bin/sh
+# hwplay-url hwplay://<percent-encoded URL>  (x-scheme-handler/hwplay) -> hardware player
+u=${1#hwplay://}
+u=$(python3 -c 'import sys,urllib.parse as p; print(p.unquote(sys.argv[1]))' "$u")
+case $u in http://*|https://*) exec /usr/local/bin/hwplay-launch "$u" ;; esac

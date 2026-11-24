@@ -1,0 +1,13 @@
+# landscape (as in the pocketshell session) and a scale that leaves room for a desktop: 1600x720 / 1.5 = 1066x480
+o=$(wlr-randr | awk 'NR==1{print $1}')
+wlr-randr --output "$o" --transform ${XFCE_DECK_TRANSFORM:-270} --scale "${XFCE_DECK_SCALE:-1.5}"
+dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP DBUS_SESSION_BUS_ADDRESS
+systemctl --user start pipewire pipewire-pulse wireplumber
+xfsettingsd &
+xfce4-notifyd &
+xfdesktop &
+(sleep 2; exec swaybg -m fill -i "${XFCE_DECK_WALLPAPER:-$HOME/Pictures/colorado.jpg}") &   # after xfdesktop, or its black backdrop covers the wallpaper
+xfce4-panel &
+thunar --daemon &
+casper-battery-label &      # battery estimate on the panel (genmon cannot embed on Wayland)
+casper-battery-watch &      # low-battery notifications

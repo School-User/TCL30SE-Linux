@@ -1,0 +1,3 @@
+[submodule "pocketshell"]
+	path = pocketshell
+	url = https://github.com/School-User/PocketShell.git

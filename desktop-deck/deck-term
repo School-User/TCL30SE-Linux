@@ -1,0 +1,2 @@
+#!/bin/sh
+exec foot -c /usr/local/share/cyberdeck/foot.ini "$@"

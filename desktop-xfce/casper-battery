@@ -1,0 +1,20 @@
+#!/bin/sh
+# casper-battery [--genmon|--pct]: battery estimate for the TCL 30 SE. There is no fuel gauge, so this is the cell voltage
+# (MT6357 AUXADC, mV = raw*5400/32768) mapped onto a rough Li-ion curve, same as PocketShell. Reads several % off under
+# load or while charging (corrected by -100 mV when charging). Shown with "~" so nobody mistakes it for a real gauge.
+raw=$(cat /sys/bus/iio/devices/*/in_resistance0_raw 2>/dev/null | head -1)
+[ -n "$raw" ] || { echo "?"; exit 1; }
+chg=0; grep -qx Charging /sys/class/power_supply/*/status 2>/dev/null && chg=1
+pct=$(awk -v raw="$raw" -v chg="$chg" 'BEGIN {
+  mv = raw * 5400 / 32768 - (chg ? 100 : 0)
+  n = split("3300 0 3500 5 3650 20 3750 40 3850 60 3950 78 4100 92 4200 100", c, " ")
+  if (mv <= c[1]) { print 0; exit }
+  for (i = 1; i < n - 1; i += 2) if (mv <= c[i+2]) { printf "%d", c[i+1] + (c[i+3]-c[i+1]) * (mv-c[i]) / (c[i+2]-c[i]) + 0.5; exit }
+  print 100 }')
+[ "$1" = --pct ] && { echo "$pct"; exit 0; }
+mark=; [ $chg = 1 ] && mark=" +"
+if [ "$1" = --genmon ]; then
+  echo "<txt> ~${pct}%${mark} </txt><tool>Battery estimate from cell voltage (no fuel gauge). $([ $chg = 1 ] && echo Charging || echo On battery).</tool>"
+else
+  echo "~${pct}%${mark}"
+fi

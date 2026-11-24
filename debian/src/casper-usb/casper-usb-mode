@@ -1,0 +1,10 @@
+#!/bin/sh
+# Choose the USB-C port role used from the next boot on: host | host-ext | device (see casper-usb-boot).
+# Switching live jams the controller, so a change only takes effect after a reboot; --reboot does that right away.
+case "$1" in
+  host|host-ext|device)
+    echo "$1" > /etc/casper-usb-mode
+    echo "USB mode at next boot: $1"
+    [ "${2:-}" = --reboot ] && { sync; systemctl reboot; } ;;
+  *) echo "usage: casper-usb-mode host|host-ext|device [--reboot]   (saved: $(cat /etc/casper-usb-mode 2>/dev/null || echo device), live: $(cat /sys/class/usb_role/*/role))"; exit 1 ;;
+esac

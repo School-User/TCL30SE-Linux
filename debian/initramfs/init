@@ -1,0 +1,80 @@
+#!/bin/busybox sh
+# First stage for both kernels (mainline 7.1 and stock 4.19): USB shell, then Debian if it is there.
+# Mounts userdata ONLY as ext4, so Android's encrypted f2fs is never touched.
+/bin/busybox --install -s /bin
+export PATH=/bin
+mount -t proc proc /proc; mount -t sysfs sysfs /sys
+if mount -t devtmpfs dev /dev 2>/dev/null; then :; else mount -t tmpfs dev /dev; mdev -s; fi
+mkdir -p /dev/pts; mount -t devpts devpts /dev/pts
+exec >/dev/kmsg 2>&1
+echo "casper-init: start, kernel $(uname -r)"
+# Safety net on the stock kernel only: back to fastboot in 150 s unless /stay exists (touch it over the USB shell).
+case "$(uname -r)" in 4.*) ( sleep 150; [ -e /stay ] || { echo "casper-init: timer, rebooting to bootloader"; /bin/rb bootloader; } ) & ;;
+*) ( sleep 240; [ -e /stay ] || { echo "casper-init: timer, rebooting"; reboot -f; } ) & ;; esac
+TIMER=$!
+# Dual-role USB: if the USB-C controller driver did not pick a role, be a device so the laptop can reach us.
+for r in /sys/class/usb_role/*/role; do [ "$(cat $r 2>/dev/null)" = none ] && echo device > $r; done
+# The kernel's built-in g_ether normally owns the USB port already (usb0). Only build a configfs gadget if it does not:
+# an unbound ACM function would still register ttyGS0, which blocks every writer once its buffer fills.
+if [ ! -e /sys/class/net/usb0 ]; then
+CFG=/sys/kernel/config; mkdir -p $CFG; mount -t configfs none $CFG 2>/dev/null || { CFG=/config; mount -t configfs none $CFG; }
+i=0; while [ -z "$(ls /sys/class/udc 2>/dev/null)" ] && [ $i -lt 40 ]; do sleep 0.5; i=$((i+1)); done
+UDC=$(ls /sys/class/udc 2>/dev/null | head -1); echo "casper-init: UDC=[$UDC] after $i waits"
+G=$CFG/usb_gadget/casper; mkdir -p $G; cd $G
+echo 0x1d6b > idVendor; echo 0x0104 > idProduct; mkdir -p strings/0x409; echo casperos > strings/0x409/serialnumber; echo CasperOS > strings/0x409/manufacturer; echo "CasperOS first stage" > strings/0x409/product
+mkdir -p configs/c.1/strings/0x409; echo shell > configs/c.1/strings/0x409/configuration; echo 500 > configs/c.1/MaxPower
+for f in acm.usb0 ncm.usb0; do mkdir -p functions/$f && ln -s functions/$f configs/c.1/ ; done
+[ -n "$UDC" ] && echo $UDC > UDC; cd /; sleep 2
+fi
+sleep 2
+ifconfig usb0 172.16.42.1 netmask 255.255.255.0 up 2>/dev/null
+telnetd -l /bin/sh 2>/dev/null
+if [ -e /dev/ttyGS0 ]; then setsid sh -c 'exec sh </dev/ttyGS0 >/dev/ttyGS0 2>&1' & fi
+echo "casper-init: gadget up"
+ROOT=""; i=0
+while [ -z "$ROOT" ] && [ $i -lt 40 ]; do
+  for u in /sys/class/block/*/uevent; do grep -q "PARTNAME=userdata" $u && ROOT=/dev/$(basename $(dirname $u)); done
+  [ -z "$ROOT" ] && sleep 0.5; i=$((i+1))
+done
+echo "casper-init: userdata=[$ROOT]"
+# Window to stop the hand-over from the laptop (touch /stay over telnet): catch.py needs a moment.
+i=0; while [ $i -lt 10 ] && [ ! -e /stay ]; do sleep 0.5; i=$((i+1)); done
+# Debian only runs on the mainline kernel: on the stock 4.x kernel (used for driver experiments) stay in this shell.
+# (Not via /stay: that would also cancel the 150 s back-to-fastboot timer, the way out if the USB shell fails.)
+NOSWITCH=""; case "$(uname -r)" in 4.*) NOSWITCH=1 ;; esac
+if [ -n "$ROOT" ] && [ -z "$NOSWITCH" ] && [ ! -e /stay ] && mount -t ext4 -o rw "$ROOT" /newroot 2>/dev/null; then
+  if [ -x /newroot/sbin/init ]; then
+    echo "casper-init: switching to Debian"
+    kill $TIMER 2>/dev/null; killall telnetd 2>/dev/null
+    mount --move /dev /newroot/dev 2>/dev/null; mount --move /proc /newroot/proc; mount --move /sys /newroot/sys
+    # DEBUG rescue shell inside Debian: root, no password, bound to the USB address only (172.16.42.1:2323).
+    # It must run chrooted into the new root (a telnetd left over from the initramfs has no /dev/ptmx and dies
+    # on its first connection), and /dev/pts stays mounted so it can allocate a pty before systemd is up.
+    # Remove once ssh is proven, and before any network other than the cable exists.
+    R=/usr/local/sbin/busybox-rescue
+    [ -x /newroot$R ] || { mkdir -p /newroot/usr/local/sbin; cp /bin/busybox /newroot$R; chmod 755 /newroot$R; }
+    chroot /newroot $R setsid $R sh -c "while :; do $R telnetd -F -p 2323 -b 172.16.42.1 -l /bin/sh; sleep 2; done" </dev/null >/dev/null 2>&1 &
+    exec switch_root /newroot /sbin/init
+  fi
+  umount /newroot
+fi
+# Stock-kernel experiment (only when the image carries the vendor touch module): load it, let it bring the chip up,
+# and save its kernel log 4 MB into dtbo_b (unused space there) because this kernel gives no USB shell.
+if [ -e /lib/ft8756.ko ]; then
+  # Stock-kernel touch test: all three ctp_ko modules in Android's order, capture, screen off/on, capture.
+  # A filtered dmesg snapshot is kept per stage because the ring buffer overflows.
+  F='fts|ft8756|casper-init|NVT|CTS|chipone|lcm|LCM|blank|disp_'
+  irqs() { grep -i -E "fts_ts" /proc/interrupts | tr -s " " | cut -c1-70; }
+  snap() { dmesg | grep -E "$F" | grep -v -E "fts_esdcheck|: Enter$|Exit\(|touch buf|report_b" > /tmp/s.$1; dmesg | grep -c "report_b.*DOWN" > /tmp/n.$1; }
+  for m in nl9911c_tddi nt36525b_spi ft8756; do insmod /lib/$m.ko; echo "casper-init: insmod $m rc=$?"; sleep 1; done
+  sleep 10; snap 1probe
+  echo "casper-init: capture1 start $(irqs)"; sleep 25; echo "casper-init: capture1 end $(irqs)"; snap 2cap1
+  echo "casper-init: blank"; echo 4 > /sys/class/graphics/fb0/blank; sleep 4; snap 3blank
+  echo "casper-init: unblank"; echo 0 > /sys/class/graphics/fb0/blank; sleep 8; snap 4unblank
+  echo "casper-init: capture2 start $(irqs)"; sleep 30; echo "casper-init: capture2 end $(irqs)"; snap 5cap2
+  for u in /sys/class/block/*/uevent; do grep -q "PARTNAME=dtbo_b" $u && LOGP=/dev/$(basename $(dirname $u)); done
+  { echo CASPERLOG; uname -r; for s in 1probe 2cap1 3blank 4unblank 5cap2; do echo "#### $s downs=$(cat /tmp/n.$s)"; cat /tmp/s.$s | tail -c 250000; done; echo CASPEREND; } > /tmp/tlog 2>&1
+  [ -n "$LOGP" ] && dd if=/tmp/tlog of=$LOGP bs=1024 seek=4096 conv=notrunc 2>/dev/null && sync && echo "casper-init: log saved to $LOGP"
+fi
+echo "casper-init: staying in first stage"
+while :; do sleep 3600; done

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Firefox ESR with hardware WebRender on the PowerVR GPU (via libhybris, EGL platform "wayland" = casper plugin).
+export MOZ_ENABLE_WAYLAND=1 MOZ_WEBRENDER=1
+P="${FIREFOX_GPU_PROFILE:-$HOME/.config/firefox-gpu}"
+# Firefox keeps its own copy of the sideloaded hwplay extension's manifest; if our files are newer than its add-on
+# database (it is rewritten on every shutdown), drop the database so the update is picked up. Built-in add-ons re-register.
+E="$P/extensions/hwplay@casper/manifest.json"
+if [ -f "$E" ] && [ -f "$P/extensions.json" ] && [ "$E" -nt "$P/extensions.json" ] && ! ps -u "$(id -u)" -o stat=,comm= | awk '$2 == "firefox-esr" && $1 !~ /^Z/ { f = 1 } END { exit !f }'; then   # zombies do not count
+	rm -f "$P/extensions.json" "$P/addonStartup.json.lz4"
+fi
+exec /usr/local/bin/gpuwin firefox-esr --no-remote --profile "$P" "$@"

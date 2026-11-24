@@ -1,0 +1,11 @@
+#!/bin/sh
+# Cyberdeck session (experimental): labwc + waybar + fuzzel + foot + mako, dark green/grey. Started from ~/.profile on tty1
+# (casper-desktop deck). Installed as /usr/local/bin/deck-session; config in /usr/local/share/cyberdeck.
+export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=labwc:wlroots XDG_SESSION_DESKTOP=deck
+export WLR_RENDERER=pixman WLR_NO_HARDWARE_CURSORS=1
+export GSK_RENDERER=cairo MOZ_ENABLE_WAYLAND=1 SDL_VIDEODRIVER=wayland QT_QPA_PLATFORM=wayland TERMCMD=deck-term
+export GTK_THEME=Adwaita:dark LANG=${LANG:-C.UTF-8}
+[ -z "$DBUS_SESSION_BUS_ADDRESS" ] && exec dbus-run-session -- "$0" "$@"
+FAST=$(for c in /sys/devices/system/cpu/cpu[0-9]*; do echo "$(cat $c/cpu_capacity 2>/dev/null || echo 0) ${c##*cpu}"; done | sort -rn | awk 'NR==1{top=$1} $1==top{printf "%s%s", (n++?",":""), $2}')
+[ -n "$FAST" ] && exec taskset -c "$FAST" labwc -C /usr/local/share/cyberdeck/labwc
+exec labwc -C /usr/local/share/cyberdeck/labwc

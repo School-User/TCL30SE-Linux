@@ -1,0 +1,195 @@
+diff --git i/drivers/usb/musb/mediatek.c w/drivers/usb/musb/mediatek.c
+index c6cbe718b..d76fe8793 100644
+--- i/drivers/usb/musb/mediatek.c
++++ w/drivers/usb/musb/mediatek.c
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+@@ -63,6 +64,55 @@ static int mtk_musb_clks_get(struct mtk_glue *glue)
+ 	return devm_clk_bulk_get(dev, MTK_MUSB_CLKS_NUM, glue->clks);
+ }
+ 
++/*
++ * TCL 30 SE: starting a host session while a device (hub) is already attached / real VBUS is already up leaves the controller
++ * as a B-device (DEVCTL 0x99, state a_wait_vrise, no CONNECT irq). host_seq selects experimental start sequences at runtime
++ * (/sys/module/mediatek/parameters/host_seq), 0 = original behaviour:
++ *   1  drop the gadget pull-up (POWER.SOFTCONN) first      2  show the controller "VBUS low" while the session starts
++ *   4  pulse ID high -> low before the session             8  longer settle delays
++ *  16  retry up to 3 times while DEVCTL still says B-device
++ *  32  (any path) power-cycle the PHY before starting the host session, like the host->device path does
++ */
++static int host_seq;
++module_param(host_seq, int, 0644);
++MODULE_PARM_DESC(host_seq, "host session start variant bitmask (see mediatek.c)");
++
++#define MTK_TPHY_SUBMODE_VBUS_LOW	BIT(0)	/* must match drivers/phy/mediatek/phy-mtk-tphy.c */
++
++static void mtk_musb_host_session_start(struct mtk_glue *glue)
++{
++	struct musb *musb = glue->musb;
++	int seq = host_seq, try, tries = (seq & 16) ? 3 : 1;
++	unsigned int settle = (seq & 8) ? 40000 : 5000;
++	u8 devctl;
++
++	for (try = 0; try < tries; try++) {
++		devctl = readb(musb->mregs + MUSB_DEVCTL);
++		musb_writeb(musb->mregs, MUSB_DEVCTL, devctl & ~MUSB_DEVCTL_SESSION);
++		if (seq & 1)
++			musb_writeb(musb->mregs, MUSB_POWER, readb(musb->mregs + MUSB_POWER) & ~MUSB_POWER_SOFTCONN);
++		if (seq & 4) {
++			phy_set_mode(glue->phy, PHY_MODE_USB_DEVICE);
++			usleep_range(settle, settle + 1000);
++		}
++		phy_set_mode_ext(glue->phy, PHY_MODE_USB_HOST, (seq & 2) ? MTK_TPHY_SUBMODE_VBUS_LOW : 0);
++		usleep_range(settle, settle + 1000);
++		devctl = readb(musb->mregs + MUSB_DEVCTL) | MUSB_DEVCTL_SESSION;
++		musb_writeb(musb->mregs, MUSB_DEVCTL, devctl);
++		if (seq & 2) {
++			usleep_range(settle, settle + 1000);
++			phy_set_mode(glue->phy, PHY_MODE_USB_HOST);	/* VBUS valid again: a clean rising edge */
++		}
++		MUSB_HST_MODE(musb);
++		msleep(20);
++		devctl = readb(musb->mregs + MUSB_DEVCTL);
++		dev_info(glue->dev, "host start seq=%d try=%d: DEVCTL=%02x state=%s\n", seq, try, devctl,
++			 musb_otg_state_string(musb));
++		if (!(devctl & MUSB_DEVCTL_BDEVICE))
++			break;
++	}
++}
++
+ static int mtk_otg_switch_set(struct mtk_glue *glue, enum usb_role role)
+ {
+ 	struct musb *musb = glue->musb;
+@@ -80,6 +130,23 @@ static int mtk_otg_switch_set(struct mtk_glue *glue, enum usb_role role)
+ 		if (glue->role == USB_ROLE_NONE)
+ 			phy_power_on(glue->phy);
+ 
++		/*
++		 * The controller samples the ID level when a session starts. End the running (device)
++		 * session and force ID low in the PHY first, otherwise DEVCTL keeps saying "B device"
++		 * and host mode never starts.
++		 */
++		if ((host_seq & 32) && glue->role != USB_ROLE_NONE) {
++			phy_power_off(glue->phy);
++			usleep_range(10000, 12000);
++			phy_power_on(glue->phy);
++		}
++		if (host_seq & ~32) {
++			mtk_musb_host_session_start(glue);
++			break;
++		}
++		musb_writeb(musb->mregs, MUSB_DEVCTL, devctl & ~MUSB_DEVCTL_SESSION);
++		phy_set_mode(glue->phy, PHY_MODE_USB_HOST);
++		usleep_range(5000, 6000);
+ 		devctl |= MUSB_DEVCTL_SESSION;
+ 		musb_writeb(musb->mregs, MUSB_DEVCTL, devctl);
+ 		MUSB_HST_MODE(musb);
+@@ -92,6 +159,16 @@ static int mtk_otg_switch_set(struct mtk_glue *glue, enum usb_role role)
+ 		musb_writeb(musb->mregs, MUSB_DEVCTL, devctl);
+ 		if (glue->role == USB_ROLE_NONE)
+ 			phy_power_on(glue->phy);
++		if (glue->role == USB_ROLE_HOST) {
++			/*
++			 * Coming back from host: put ID high again, then drop and re-assert the PHY's forced
++			 * VBUS-valid so the controller sees a fresh VBUS edge and starts a device session.
++			 */
++			phy_set_mode(glue->phy, PHY_MODE_USB_DEVICE);
++			phy_power_off(glue->phy);
++			usleep_range(10000, 12000);
++			phy_power_on(glue->phy);
++		}
+ 
+ 		MUSB_DEV_MODE(musb);
+ 		break;
+diff --git i/drivers/usb/typec/wusb3801.c w/drivers/usb/typec/wusb3801.c
+index 6062875fb..62ff8cb0f 100644
+--- i/drivers/usb/typec/wusb3801.c
++++ w/drivers/usb/typec/wusb3801.c
+@@ -9,6 +9,7 @@
+ #include <linux/module.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/usb/role.h>
+ #include <linux/usb/typec.h>
+ 
+ #define WUSB3801_REG_DEVICE_ID		0x01
+@@ -90,12 +91,22 @@ struct wusb3801 {
+ 	struct typec_port	*port;
+ 	struct regmap		*regmap;
+ 	struct regulator	*vbus_supply;
++	struct usb_role_switch	*role_sw;
+ 	unsigned int		partner_type;
+ 	enum typec_port_type	port_type;
+ 	enum typec_pwr_opmode	pwr_opmode;
+ 	bool			vbus_on;
+ };
+ 
++/*
++ * TCL 30 SE: hold_role=1 leaves the USB role and the VBUS boost to userspace (casper-usb-boot). Without it every CC event
++ * (hub unplugged, a powered hub seen as a source) switches the controller to device mode and the boost off, which kills
++ * hot-swapping of docks.
++ */
++static bool hold_role;
++module_param(hold_role, bool, 0644);
++MODULE_PARM_DESC(hold_role, "do not change the USB role or VBUS on CC events (userspace controls them)");
++
+ static enum typec_role wusb3801_get_default_role(struct wusb3801 *wusb3801)
+ {
+ 	switch (wusb3801->port_type) {
+@@ -233,7 +244,15 @@ static void wusb3801_hw_update(struct wusb3801 *wusb3801)
+ 
+ 	partner_type = status & WUSB3801_STAT_PARTNER;
+ 
+-	if (partner_type == WUSB3801_STAT_PARTNER_SNK) {
++	/* Host only while a sink (an OTG adapter) is attached; otherwise stay a device so a PC can always reach us. */
++	if (wusb3801->role_sw && !hold_role)
++		usb_role_switch_set_role(wusb3801->role_sw,
++					 partner_type == WUSB3801_STAT_PARTNER_SNK ?
++					 USB_ROLE_HOST : USB_ROLE_DEVICE);
++
++	if (hold_role) {
++		/* userspace owns VBUS */
++	} else if (partner_type == WUSB3801_STAT_PARTNER_SNK) {
+ 		if (!wusb3801->vbus_on) {
+ 			ret = regulator_enable(wusb3801->vbus_supply);
+ 			if (ret)
+@@ -343,9 +362,16 @@ static int wusb3801_probe(struct i2c_client *client)
+ 	if (IS_ERR(wusb3801->vbus_supply))
+ 		return PTR_ERR(wusb3801->vbus_supply);
+ 
++	/* Optional: a graph link to the USB controller ("usb-role-switch") lets us switch host/device. */
++	wusb3801->role_sw = usb_role_switch_get(dev);
++	if (IS_ERR(wusb3801->role_sw))
++		return dev_err_probe(dev, PTR_ERR(wusb3801->role_sw), "getting role switch\n");
++
+ 	connector = device_get_named_child_node(dev, "connector");
+-	if (!connector)
++	if (!connector) {
++		usb_role_switch_put(wusb3801->role_sw);
+ 		return -ENODEV;
++	}
+ 
+ 	ret = typec_get_fw_cap(&wusb3801->cap, connector);
+ 	if (ret)
+@@ -395,6 +421,7 @@ static int wusb3801_probe(struct i2c_client *client)
+ 	typec_unregister_port(wusb3801->port);
+ err_put_connector:
+ 	fwnode_handle_put(connector);
++	usb_role_switch_put(wusb3801->role_sw);
+ 
+ 	return ret;
+ }
+@@ -411,6 +438,7 @@ static void wusb3801_remove(struct i2c_client *client)
+ 
+ 	if (wusb3801->vbus_on)
+ 		regulator_disable(wusb3801->vbus_supply);
++	usb_role_switch_put(wusb3801->role_sw);
+ }
+ 
+ static const struct of_device_id wusb3801_of_match[] = {

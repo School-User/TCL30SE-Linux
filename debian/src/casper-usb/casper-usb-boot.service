@@ -1,0 +1,9 @@
+[Unit]
+Description=Set the USB-C port role once at boot (/etc/casper-usb-mode)
+After=systemd-udev-settle.service systemd-modules-load.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/casper-usb-boot
+[Install]
+WantedBy=multi-user.target

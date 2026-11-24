@@ -1,0 +1,10 @@
+[Unit]
+Description=Switch audio between speaker and headphone jack
+After=casper-audio.service
+Requires=casper-audio.service
+[Service]
+ExecStart=/usr/local/sbin/casper-jack
+Restart=on-failure
+RestartSec=3
+[Install]
+WantedBy=multi-user.target

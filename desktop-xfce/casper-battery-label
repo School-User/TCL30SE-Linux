@@ -1,0 +1,21 @@
+#!/usr/bin/python3
+# Battery estimate as a small label on top of the XFCE panel (centre). The panel cannot host the genmon plugin on
+# Wayland (external plugins need X11), so this is a GTK layer-shell surface instead. Text from casper-battery (~NN%, + = charging).
+import ctypes; ctypes.CDLL("libgtk-layer-shell.so.0")   # 0.9+: must be loaded before libwayland-client
+import subprocess, gi
+gi.require_version("Gtk", "3.0"); gi.require_version("GtkLayerShell", "0.1")
+from gi.repository import Gtk, GLib, GtkLayerShell as L
+
+w = Gtk.Window(); L.init_for_window(w); L.set_layer(w, L.Layer.OVERLAY)
+L.set_anchor(w, L.Edge.TOP, True); L.set_margin(w, L.Edge.TOP, 6); L.set_keyboard_mode(w, L.KeyboardMode.NONE); L.set_exclusive_zone(w, -1)   # -1: sit on the panel, not below it
+lab = Gtk.Label(); w.add(lab)
+css = Gtk.CssProvider(); css.load_from_data(b"window{background:transparent} label{font-weight:bold;padding:0 6px}")
+Gtk.StyleContext.add_provider_for_screen(w.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+def tick():
+    try: t = subprocess.run(["casper-battery"], capture_output=True, text=True, timeout=5).stdout.strip()
+    except Exception: t = "?"
+    lab.set_text("battery " + t); lab.set_tooltip_text("Estimate from cell voltage (no fuel gauge); + = charging")
+    return True
+
+tick(); GLib.timeout_add_seconds(30, tick); w.show_all(); Gtk.main()

@@ -1,0 +1,9 @@
+#!/bin/sh
+# GPU line for fastfetch: fastfetch only probes Mesa, so it reports llvmpipe; the PowerVR runs through libhybris.
+# Prints the real GPU only when its kernel driver (pvrsrvkm) is loaded; BVNC from the firmware file the driver uses.
+if [ -d /sys/module/pvrsrvkm ]; then
+  b=$(ls /lib/firmware/rgx.fw.[0-9]* 2>/dev/null | head -1); b=${b##*rgx.fw.}
+  echo "PowerVR Rogue GE8320${b:+ (BVNC $b)} via libhybris"
+else
+  echo "none (PowerVR driver not loaded; apps use llvmpipe)"
+fi

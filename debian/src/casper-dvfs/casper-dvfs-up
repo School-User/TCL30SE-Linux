@@ -1,0 +1,23 @@
+#!/bin/sh
+# Raise the fast CPU cluster (cpu0-3) from the bootloader's 1.5 GHz to 1.6 GHz after boot (see casper-mt6765-dvfs.c).
+# Safe step only: the stock vendor table needs 768 mV for 1.617 GHz and the bootloader already leaves the rail at 800 mV, so the
+# voltage is NOT touched. The slow cluster (cpu4-7, 0.92 GHz) stays as is: its next stock step needs more than 800 mV.
+# Tested 2026-11-23: 1.55 and 1.6 GHz, 4-core hash/arithmetic stress, 0 errors, scales with the clock (+3% per 50 MHz).
+# NOT safe: 1.879 GHz at 875 mV (the 2026-11-21 attempt hung the phone and left the guard file behind).
+# Guard: if a previous attempt never finished (the phone hung or reset), skip this boot and stay on the bootloader's clocks.
+# rm the guard to retry. There is no SoC temperature sensor on this phone, so do not go higher without thinking.
+KO=/usr/local/lib/casper; case "$(uname -r)" in *nd+) KO=$KO/nd;; esac
+G=/var/lib/casper-dvfs.trying
+D=/sys/kernel/debug/casper-dvfs
+L_KHZ=${CASPER_L_KHZ:-1600000}
+if [ -e $G ]; then echo "casper-dvfs: previous attempt did not finish, skipping (rm $G to retry)"; exit 0; fi
+touch $G; sync
+mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug
+insmod $KO/casper-mt6765-dvfs.ko 2>/dev/null || true
+for i in $(seq 20); do [ -e $D/l_khz ] && break; sleep 0.5; done
+[ -e $D/l_khz ] || { echo "casper-dvfs: module not ready"; rm -f $G; exit 0; }
+# the cluster being retuned must not run this write: do it from a slow core (cpu4)
+if ! taskset -c 4 sh -c "echo $L_KHZ > $D/l_khz"; then echo "casper-dvfs: write failed"; rm -f $G; exit 0; fi
+sleep 60       # if the phone survives a minute at the new clock the step is considered good
+rm -f $G; sync
+echo "casper-dvfs: L $(cat $D/l_khz) kHz, LL $(cat $D/ll_khz) kHz"

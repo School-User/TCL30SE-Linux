@@ -1,0 +1,57 @@
+# build outputs and test media
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+.*.cmd
+.module-common.o
+modules.order
+Module.symvers
+__pycache__/
+*.pyc
+*.yuv
+*.raw
+*.nv12
+*.i420
+*.h264
+*.pem
+# large trees / nested repos / unrelated work
+images/
+out/
+backup/
+scratch/
+bpf/
+gpu/libhybris/
+gpu/android-headers/
+casperos-package/
+
+# vendor blobs and signing material (not redistributed here)
+debian/firmware/
+debian/harvest/
+debian/drivers-built/
+debian/drivers-nd/
+debian/backups/
+debian/live-backup/
+debian/out/
+debian/initramfs/bin/busybox
+debian/initramfs/newroot/
+killbg/ks.*
+*.jks
+*.pass
+*.img
+*.tar
+*.tgz
+gpu/aroot*/
+gpu/vendor*/
+gpu/system_full/
+gpu/apex_tmp/
+gpu/vivo/
+gpu/ti-src/
+gpu/k/
+gpu/run/
+gpu/wgpu-spike/
+
+# private working logs (kept locally)
+debian/AGENT-CHAT.md
+notes/log.md

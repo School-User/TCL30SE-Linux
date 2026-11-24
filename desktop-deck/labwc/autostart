@@ -1,0 +1,10 @@
+# landscape, rotated so touch matches (as the XFCE session); 1600x720 / 1.5 = 1066x480
+o=$(wlr-randr | awk 'NR==1{print $1}')
+wlr-randr --output "$o" --transform ${DECK_TRANSFORM:-270} --scale "${DECK_SCALE:-1.5}"
+dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP DBUS_SESSION_BUS_ADDRESS
+systemctl --user start pipewire pipewire-pulse wireplumber
+swaybg -m fill -i "${DECK_WALLPAPER:-$HOME/Pictures/colorado.jpg}" &
+waybar -c /usr/local/share/cyberdeck/waybar/config.jsonc -s /usr/local/share/cyberdeck/waybar/style.css &
+mako -c /usr/local/share/cyberdeck/mako.conf &
+casper-battery-watch &
+swayidle -w timeout ${DECK_LOCK_AFTER:-300} deck-lock before-sleep deck-lock &   # auto-lock after 5 min idle

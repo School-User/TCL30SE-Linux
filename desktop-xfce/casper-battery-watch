@@ -1,0 +1,13 @@
+#!/bin/sh
+# Low-battery warning for the deck session: every 60 s, notify at <=15 % and <=5 % (once each per discharge).
+warned=100
+while sleep 60; do
+  p=$(casper-battery --pct) || continue
+  if grep -qx Charging /sys/class/power_supply/*/status 2>/dev/null; then warned=100; continue; fi
+  for t in 5 15; do
+    if [ "$p" -le $t ] && [ $warned -gt $t ]; then
+      notify-send -u critical "Battery low (~${p}%)" "Plug the dock charger in. The estimate is from voltage and can be off by several %."
+      warned=$t; break
+    fi
+  done
+done

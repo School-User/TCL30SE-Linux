@@ -1,0 +1,4 @@
+#!/bin/sh
+# CPU-only display (simpledrm): no GL in GTK or WebKit.
+export GTK_A11Y=none GSK_RENDERER=cairo WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1
+exec /usr/bin/python3 /usr/local/lib/pocket/pocket.py "$@"
